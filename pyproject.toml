@@ -12,4 +12,4 @@ Repository = "https://github.com/EnragedAntelope/comfyui-relight"
 [tool.comfy]
 PublisherId = "enragedantelope"
 DisplayName = "ComfyUI-ReLight"
-Icon = "💡"
+Icon = ""

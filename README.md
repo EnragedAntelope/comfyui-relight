@@ -42,18 +42,6 @@ ReLight is a powerful custom node for ComfyUI that adds professional-grade light
 - **Visual Debugging** - See exactly where your lights are positioned and how they interact
 - **Fine-Tuning Controls** - Perfect your lighting with precision adjustments for blur, strength, and rim amplification
 
-## 🖼️ Before & After Examples
-
-Here's an example of how ReLight transforms images with its lighting effects:
-
-![Before/After Comparison](https://via.placeholder.com/900x300?text=Before+and+After+Comparison)
-
-The image shows:
-- **Left**: Original image of a subject
-- **Right**: Same image with the "Warm Sunset Glow" lighting preset applied using "Behind Subject" light direction for a dramatic rim-lit effect
-
-> *Replace with your own before/after examples when integrating this into your repository!*
-
 ## 🔧 Installation
 
 ### Using ComfyUI-Manager (Recommended)

@@ -84,9 +84,9 @@ ReLight works best with high-quality foreground masks. We recommend installing:
 
 ### Sample Workflow
 
-![Sample Workflow](https://via.placeholder.com/800x400?text=Sample+Workflow+Screenshot)
+![Sample Workflow](https://github.com/EnragedAntelope/comfyui-relight/blob/main/example%20workflow.json)
 
-The repository includes a sample workflow file (`Relight example workflow.json`) that demonstrates:
+The repository includes a sample workflow file (`example workflow.json`) that demonstrates:
 
 1. Loading an image
 2. Removing the background using ComfyUI Essentials' RemBG nodes
@@ -94,26 +94,6 @@ The repository includes a sample workflow file (`Relight example workflow.json`)
 4. Viewing the results through both standard preview and debug visualization
 
 Simply load this workflow in ComfyUI to see ReLight in action!
-
-## 📊 Lighting Workflow Examples
-
-### Dramatic Portrait Lighting
-
-![Portrait Workflow](https://via.placeholder.com/800x300?text=Portrait+Lighting+Workflow)
-
-1. Connect portrait image and mask
-2. Select "Dramatic Side Light" preset
-3. Increase effect_strength to 1.2
-4. Adjust light position slightly to match subject features
-
-### Epic Fantasy Rim Light
-
-![Fantasy Workflow](https://via.placeholder.com/800x300?text=Fantasy+Rim+Light+Workflow)
-
-1. Connect character image and mask
-2. Select "Rim Light (Behind)" preset
-3. Set light color to blue-white (R:200, G:220, B:255)
-4. Increase rim_amplification to 3.0 for maximum glow
 
 ## 💡 Pro Tips
 

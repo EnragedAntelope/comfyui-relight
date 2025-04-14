@@ -6,8 +6,7 @@
 > **Transform your images with cinematic lighting effects in a single click!**
 
 ReLight is a powerful custom node for ComfyUI that adds professional-grade lighting capabilities to your images. Create dramatic shadows, natural window lighting, warm sunset glows, or striking rim effects with precise control over every aspect of your lighting setup.
-
-![ReLight Node Example](https://via.placeholder.com/800x400?text=ReLight+Example+Image)
+![ReLight Node Example](https://github.com/user-attachments/assets/34fa5b9f-65e6-4953-8bd4-65a349ed9455)
 
 ## 🌟 Features
 

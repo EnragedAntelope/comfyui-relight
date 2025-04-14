@@ -1,7 +1,7 @@
 [project]
-name = "relight"
+name = "ReLight"
 description = "Transform your images with cinematic lighting effects in a single click! ReLight is a powerful ComfyUI node that adds professional-grade lighting capabilities including multiple light sources, rim lighting, and 3D lighting simulation."
-version = "1.0"
+version = "1.00"
 license = {file = "LICENSE"}
 dependencies = ["torch", "numpy", "Pillow", "scipy"]
 

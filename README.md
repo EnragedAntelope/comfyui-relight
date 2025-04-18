@@ -95,6 +95,82 @@ The repository includes a sample workflow file (`example workflow.json`) that de
 
 Simply load this workflow in ComfyUI to see ReLight in action!
 
+## 📸 Examples
+
+### Dramatic Three-Point RGB Lighting
+
+![Before/After Three-Point RGB Lighting (_in case you really want to overdo things_)](https://github.com/user-attachments/assets/65024b82-2ba2-465e-9505-ca2025b93764)
+
+This example uses three colored lights to create a purposely over the top striking RGB lighting setup:
+
+- **Main Settings**: 
+  - 3 light sources
+  - "Behind Subject" light direction
+  - 2.0 effect strength
+
+- **Light 1 (Red)**: 
+  - Position: far right (0.99, 0.15)
+  - RGB Color: (255, 0, 0)
+  - High intensity (2.0)
+
+- **Light 2 (Green)**:
+  - Position: left side (0.2, 0.3)
+  - RGB Color: (255, 0, 0)
+  - Medium intensity (0.7)
+
+- **Light 3 (Blue)**:
+  - Position: bottom center (0.3, 0.8)
+  - RGB Color: (0, 0, 255)
+  - Low intensity (0.2)
+
+This setup creates vibrant color separation while maintaining the "Behind Subject" mode to emphasize the edges of the figure with dramatic rim lighting.
+
+### Other Lighting Ideas to Try
+
+Here are some additional lighting scenarios that showcase ReLight's versatility:
+
+#### Split Lighting Portrait
+![Brighten a subject and make it pop](https://github.com/user-attachments/assets/c1d81a70-0c10-460a-bd57-e6c78472a7e9)
+
+Create dramatic portrait lighting with a strong contrast between light and shadow:
+- Single light source at position (0.05, 0.5)
+- Large outer radius (0.8)
+- High contrast (25)
+- Reduced saturation (-15)
+- "In Front of Subject" light direction
+
+#### Sunset Silhouette
+![Spidey outlined by the sun](https://github.com/user-attachments/assets/8ed5851a-3607-46c1-a1ba-eb3d297733d4)
+
+Create a beautiful sunset silhouette effect:
+- Light positioned low and centered (0.5, 0.9)
+- Warm colors (255, 180, 100) (enable "use colored lights")
+- "Behind Subject" light direction
+- High rim amplification (3.0)
+- Moderate mask blur (60)
+
+#### Atmospheric Fog Light
+![Creature with foggy lighting](https://github.com/user-attachments/assets/db0d51da-6e9f-4359-9af0-2213954e010e)
+
+Simulate light breaking through fog or mist:
+- Light positioned high (0.5, 0.1)
+- Cool blue-white color (200, 220, 255) (enable "use colored lights")
+- "In Front of Subject" light direction
+- High mask blur (100)
+- Gradient mode enabled
+- Medium intensity (1.5)
+
+#### Moonlight Through Window
+![Note hair illumination from moonlight in "After" image on right](https://github.com/user-attachments/assets/6e6e941c-9ea8-437e-bbcc-9fef3747dca4)
+
+Simulate soft moonlight streaming through a window:
+- Light positioned at upper corner (0.8, 0.2)
+- Cool blue color (120, 150, 255) (enable "use colored lights")
+- Gradient mode enabled
+- Low brightness (-10)
+- High blue cast (Temperature -30)
+
+
 ## 💡 Pro Tips
 
 - **Layer Multiple Lights** - Use several ReLight nodes in sequence for complex lighting setups

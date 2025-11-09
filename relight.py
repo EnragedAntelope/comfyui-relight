@@ -11,8 +11,11 @@ import time  # For debugging
 import inspect # For mask finding hack
 import traceback # For detailed error logging
 
+# Import v3 ComfyUI API
+from comfy_api.latest import ComfyExtension, io, ui
 
-class ReLight:
+
+class ReLight(io.ComfyNode):
     """
     Creates realistic lighting effects by applying color corrections or colored light
     to distinct areas of an image. Supports multiple light sources, colored lights,
@@ -77,93 +80,96 @@ class ReLight:
     }
 
     @classmethod
-    def INPUT_TYPES(cls):
-        """Define node inputs for ComfyUI, ordered logically."""
-        # Reordered for better UX
-        return {
-            "required": {
+    def define_schema(cls) -> io.Schema:
+        """Define node schema for ComfyUI v3."""
+        return io.Schema(
+            node_id="ReLight",
+            display_name="ReLight 💡",
+            category="image/lighting",
+            description="Creates realistic lighting effects with multiple light sources, colored lights, and 3D lighting simulation with subject occlusion",
+            inputs=[
                 # --- Core Inputs ---
-                "image": ("IMAGE", {"tooltip": "The input image to apply lighting effects to"}),
-                "mask": ("MASK", {"tooltip": "Foreground mask (white=subject, black=background). Required for occlusion ('Apply 3D Lighting') and optional compositing ('Remove Background')."}),
+                io.Image.Input("image", tooltip="The input image to apply lighting effects to"),
+                io.Mask.Input("mask", tooltip="Foreground mask (white=subject, black=background). Required for occlusion ('Apply 3D Lighting') and optional compositing ('Remove Background')"),
 
                 # --- Global Behavior ---
-                "preset": (list(cls.PRESETS.keys()), {"tooltip": "Select a preset or 'None' for custom settings"}),
-                "num_light_sources": ("INT", {"default": 1, "min": 1, "max": 3, "step": 1, "tooltip": "Number of light sources (1-3)"}),
-                "preserve_positioning": ("BOOLEAN", {"default": True, "tooltip": "Keep manual light positions when changing presets?"}),
-                "show_debug_info": ("BOOLEAN", {"default": False, "tooltip": "Output a debug visualization image?"}),
+                io.Combo.Input("preset", options=list(cls.PRESETS.keys()), default="None", tooltip="Select a preset or 'None' for custom settings"),
+                io.Int.Input("num_light_sources", default=1, min=1, max=3, step=1, tooltip="Number of light sources (1-3)"),
+                io.Boolean.Input("preserve_positioning", default=True, tooltip="Keep manual light positions when changing presets?"),
+                io.Boolean.Input("show_debug_info", default=False, tooltip="Output a debug visualization image?"),
 
                 # --- Lighting Mode & Occlusion ---
-                "use_colored_lights": ("BOOLEAN", {"default": False, "tooltip": "Use additive colored light instead of color correction?"}),
-                "use_gradient_mode": ("BOOLEAN", {"default": False, "tooltip": "Use directional gradient masks instead of radial?"}),
-                "apply_3d_lighting": ("BOOLEAN", {"default": True, "tooltip": "Simulate light occlusion by subject? Requires 'mask' input."}),
-                "light_direction": (["Behind Subject", "In Front of Subject", "No Occlusion"], {"default": "No Occlusion", "tooltip": "How light interacts with subject (Requires 'mask' and 'Apply 3D Lighting')"}),
-                "remove_background": ("BOOLEAN", {"default": True, "tooltip": "Composite final result using mask? (Note: Ignored for 'Behind Subject' & 'In Front of Subject' directions)"}), # Updated tooltip
+                io.Boolean.Input("use_colored_lights", default=False, tooltip="Use additive colored light instead of color correction?"),
+                io.Boolean.Input("use_gradient_mode", default=False, tooltip="Use directional gradient masks instead of radial?"),
+                io.Boolean.Input("apply_3d_lighting", default=True, tooltip="Simulate light occlusion by subject? Requires 'mask' input."),
+                io.Combo.Input("light_direction", options=["Behind Subject", "In Front of Subject", "No Occlusion"], default="No Occlusion", tooltip="How light interacts with subject (Requires 'mask' and 'Apply 3D Lighting')"),
+                io.Boolean.Input("remove_background", default=True, tooltip="Composite final result using mask? (Note: Ignored for 'Behind Subject' & 'In Front of Subject' directions)"),
 
                 # --- Global Modifiers ---
-                "effect_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 5.0, "step": 0.1, "tooltip": "Overall intensity multiplier for lighting adjustments/colors"}),
-                "mask_blur": ("FLOAT", {"default": 50.0, "min": 0.0, "max": 200.0, "step": 1.0, "tooltip": "Blur radius for light mask edges (smoother transitions)"}),
-                "rim_amplification": ("FLOAT", {"default": 2.0, "min": 0.0, "max": 10.0, "step": 0.1, "tooltip": "Intensity boost specifically for rim light component (when 'Behind Subject')"}),
+                io.Float.Input("effect_strength", default=1.0, min=0.0, max=5.0, step=0.1, tooltip="Overall intensity multiplier for lighting adjustments/colors"),
+                io.Float.Input("mask_blur", default=50.0, min=0.0, max=200.0, step=1.0, tooltip="Blur radius for light mask edges (smoother transitions)"),
+                io.Float.Input("rim_amplification", default=2.0, min=0.0, max=10.0, step=0.1, tooltip="Intensity boost specifically for rim light component (when 'Behind Subject')"),
 
                 # --- Light 1 Settings ---
                 # Position & Shape
-                "light_position_x": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Light 1: Horizontal position (0=left, 1=right)"}),
-                "light_position_y": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Light 1: Vertical position (0=top, 1=bottom)"}),
-                "inner_circle_radius": ("FLOAT", {"default": 0.4, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Light 1: Inner radius (strongest effect area)"}),
-                "outer_circle_radius": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Light 1: Outer radius (falloff area)"}),
+                io.Float.Input("light_position_x", default=0.5, min=0.0, max=1.0, step=0.01, tooltip="Light 1: Horizontal position (0=left, 1=right)"),
+                io.Float.Input("light_position_y", default=0.5, min=0.0, max=1.0, step=0.01, tooltip="Light 1: Vertical position (0=top, 1=bottom)"),
+                io.Float.Input("inner_circle_radius", default=0.4, min=0.0, max=1.0, step=0.01, tooltip="Light 1: Inner radius (strongest effect area)"),
+                io.Float.Input("outer_circle_radius", default=0.7, min=0.0, max=1.0, step=0.01, tooltip="Light 1: Outer radius (falloff area)"),
                 # Colored Light Mode
-                "light_color_r": ("INT", {"default": 255, "min": 0, "max": 255, "step": 1, "tooltip": "Light 1: Red color (if 'Use Colored Lights' is True)"}),
-                "light_color_g": ("INT", {"default": 255, "min": 0, "max": 255, "step": 1, "tooltip": "Light 1: Green color (if 'Use Colored Lights' is True)"}),
-                "light_color_b": ("INT", {"default": 255, "min": 0, "max": 255, "step": 1, "tooltip": "Light 1: Blue color (if 'Use Colored Lights' is True)"}),
-                "light_intensity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 3.0, "step": 0.1, "tooltip": "Light 1: Intensity (if 'Use Colored Lights' is True)"}),
+                io.Int.Input("light_color_r", default=255, min=0, max=255, step=1, tooltip="Light 1: Red color (if 'Use Colored Lights' is True)"),
+                io.Int.Input("light_color_g", default=255, min=0, max=255, step=1, tooltip="Light 1: Green color (if 'Use Colored Lights' is True)"),
+                io.Int.Input("light_color_b", default=255, min=0, max=255, step=1, tooltip="Light 1: Blue color (if 'Use Colored Lights' is True)"),
+                io.Float.Input("light_intensity", default=1.0, min=0.0, max=3.0, step=0.1, tooltip="Light 1: Intensity (if 'Use Colored Lights' is True)"),
                 # Color Correction Mode (Inner Area)
-                "inner_brightness": ("FLOAT", {"default": 10.0, "min": -100.0, "max": 100.0, "step": 1.0, "tooltip": "Light 1: Inner area brightness (Color Correction mode)"}),
-                "inner_contrast": ("FLOAT", {"default": 5.0, "min": -100.0, "max": 100.0, "step": 1.0, "tooltip": "Light 1: Inner area contrast (Color Correction mode)"}),
-                "inner_saturation": ("FLOAT", {"default": 5.0, "min": -100.0, "max": 100.0, "step": 1.0, "tooltip": "Light 1: Inner area saturation (Color Correction mode)"}),
-                "inner_temperature": ("FLOAT", {"default": 0.0, "min": -100.0, "max": 100.0, "step": 1.0, "tooltip": "Light 1: Inner area temperature (-100=cool, 100=warm)"}),
-                "inner_tint": ("FLOAT", {"default": 0.0, "min": -100.0, "max": 100.0, "step": 1.0, "tooltip": "Light 1: Inner area tint (-100=magenta, 100=green)"}),
-                "inner_gamma": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 5.0, "step": 0.05, "tooltip": "Light 1: Inner area gamma"}),
+                io.Float.Input("inner_brightness", default=10.0, min=-100.0, max=100.0, step=1.0, tooltip="Light 1: Inner area brightness (Color Correction mode)"),
+                io.Float.Input("inner_contrast", default=5.0, min=-100.0, max=100.0, step=1.0, tooltip="Light 1: Inner area contrast (Color Correction mode)"),
+                io.Float.Input("inner_saturation", default=5.0, min=-100.0, max=100.0, step=1.0, tooltip="Light 1: Inner area saturation (Color Correction mode)"),
+                io.Float.Input("inner_temperature", default=0.0, min=-100.0, max=100.0, step=1.0, tooltip="Light 1: Inner area temperature (-100=cool, 100=warm)"),
+                io.Float.Input("inner_tint", default=0.0, min=-100.0, max=100.0, step=1.0, tooltip="Light 1: Inner area tint (-100=magenta, 100=green)"),
+                io.Float.Input("inner_gamma", default=1.0, min=0.1, max=5.0, step=0.05, tooltip="Light 1: Inner area gamma"),
                 # Color Correction Mode (Outer Area)
-                "outer_brightness": ("FLOAT", {"default": -10.0, "min": -100.0, "max": 100.0, "step": 1.0, "tooltip": "Light 1: Outer area brightness (Color Correction mode)"}),
-                "outer_contrast": ("FLOAT", {"default": 0.0, "min": -100.0, "max": 100.0, "step": 1.0, "tooltip": "Light 1: Outer area contrast (Color Correction mode)"}),
-                "outer_saturation": ("FLOAT", {"default": -10.0, "min": -100.0, "max": 100.0, "step": 1.0, "tooltip": "Light 1: Outer area saturation (Color Correction mode)"}),
-                "outer_temperature": ("FLOAT", {"default": 0.0, "min": -100.0, "max": 100.0, "step": 1.0, "tooltip": "Light 1: Outer area temperature"}),
-                "outer_tint": ("FLOAT", {"default": 0.0, "min": -100.0, "max": 100.0, "step": 1.0, "tooltip": "Light 1: Outer area tint"}),
-                "outer_gamma": ("FLOAT", {"default": 1.1, "min": 0.1, "max": 5.0, "step": 0.05, "tooltip": "Light 1: Outer area gamma"}),
-            },
-            "optional": {
-                # --- Light 2 Settings ---
-                "light2_position_x": ("FLOAT", {"default": 0.8, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Light 2: Horizontal position"}),
-                "light2_position_y": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Light 2: Vertical position"}),
-                "light2_inner_radius": ("FLOAT", {"default": 0.3, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Light 2: Inner radius"}),
-                "light2_outer_radius": ("FLOAT", {"default": 0.6, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Light 2: Outer radius"}),
-                "light2_color_r": ("INT", {"default": 180, "min": 0, "max": 255, "step": 1, "tooltip": "Light 2: Red color"}),
-                "light2_color_g": ("INT", {"default": 180, "min": 0, "max": 255, "step": 1, "tooltip": "Light 2: Green color"}),
-                "light2_color_b": ("INT", {"default": 255, "min": 0, "max": 255, "step": 1, "tooltip": "Light 2: Blue color"}),
-                "light2_intensity": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 3.0, "step": 0.1, "tooltip": "Light 2: Intensity (Colored mode)"}),
-                # --- Light 3 Settings ---
-                "light3_position_x": ("FLOAT", {"default": 0.3, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Light 3: Horizontal position"}),
-                "light3_position_y": ("FLOAT", {"default": 0.8, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Light 3: Vertical position"}),
-                "light3_inner_radius": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Light 3: Inner radius"}),
-                "light3_outer_radius": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Light 3: Outer radius"}),
-                "light3_color_r": ("INT", {"default": 255, "min": 0, "max": 255, "step": 1, "tooltip": "Light 3: Red color"}),
-                "light3_color_g": ("INT", {"default": 150, "min": 0, "max": 255, "step": 1, "tooltip": "Light 3: Green color"}),
-                "light3_color_b": ("INT", {"default": 120, "min": 0, "max": 255, "step": 1, "tooltip": "Light 3: Blue color"}),
-                "light3_intensity": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 3.0, "step": 0.1, "tooltip": "Light 3: Intensity (Colored mode)"}),
-            }
-        }
+                io.Float.Input("outer_brightness", default=-10.0, min=-100.0, max=100.0, step=1.0, tooltip="Light 1: Outer area brightness (Color Correction mode)"),
+                io.Float.Input("outer_contrast", default=0.0, min=-100.0, max=100.0, step=1.0, tooltip="Light 1: Outer area contrast (Color Correction mode)"),
+                io.Float.Input("outer_saturation", default=-10.0, min=-100.0, max=100.0, step=1.0, tooltip="Light 1: Outer area saturation (Color Correction mode)"),
+                io.Float.Input("outer_temperature", default=0.0, min=-100.0, max=100.0, step=1.0, tooltip="Light 1: Outer area temperature"),
+                io.Float.Input("outer_tint", default=0.0, min=-100.0, max=100.0, step=1.0, tooltip="Light 1: Outer area tint"),
+                io.Float.Input("outer_gamma", default=1.1, min=0.1, max=5.0, step=0.05, tooltip="Light 1: Outer area gamma"),
 
-    RETURN_TYPES = ("IMAGE", "MASK", "IMAGE")
-    RETURN_NAMES = ("image", "mask", "debug_image")
-    FUNCTION = "relight_image"
-    CATEGORY = "image/lighting"
+                # --- Light 2 Settings (Optional) ---
+                io.Float.Input("light2_position_x", default=0.8, min=0.0, max=1.0, step=0.01, optional=True, tooltip="Light 2: Horizontal position"),
+                io.Float.Input("light2_position_y", default=0.2, min=0.0, max=1.0, step=0.01, optional=True, tooltip="Light 2: Vertical position"),
+                io.Float.Input("light2_inner_radius", default=0.3, min=0.0, max=1.0, step=0.01, optional=True, tooltip="Light 2: Inner radius"),
+                io.Float.Input("light2_outer_radius", default=0.6, min=0.0, max=1.0, step=0.01, optional=True, tooltip="Light 2: Outer radius"),
+                io.Int.Input("light2_color_r", default=180, min=0, max=255, step=1, optional=True, tooltip="Light 2: Red color"),
+                io.Int.Input("light2_color_g", default=180, min=0, max=255, step=1, optional=True, tooltip="Light 2: Green color"),
+                io.Int.Input("light2_color_b", default=255, min=0, max=255, step=1, optional=True, tooltip="Light 2: Blue color"),
+                io.Float.Input("light2_intensity", default=0.7, min=0.0, max=3.0, step=0.1, optional=True, tooltip="Light 2: Intensity (Colored mode)"),
+
+                # --- Light 3 Settings (Optional) ---
+                io.Float.Input("light3_position_x", default=0.3, min=0.0, max=1.0, step=0.01, optional=True, tooltip="Light 3: Horizontal position"),
+                io.Float.Input("light3_position_y", default=0.8, min=0.0, max=1.0, step=0.01, optional=True, tooltip="Light 3: Vertical position"),
+                io.Float.Input("light3_inner_radius", default=0.25, min=0.0, max=1.0, step=0.01, optional=True, tooltip="Light 3: Inner radius"),
+                io.Float.Input("light3_outer_radius", default=0.5, min=0.0, max=1.0, step=0.01, optional=True, tooltip="Light 3: Outer radius"),
+                io.Int.Input("light3_color_r", default=255, min=0, max=255, step=1, optional=True, tooltip="Light 3: Red color"),
+                io.Int.Input("light3_color_g", default=150, min=0, max=255, step=1, optional=True, tooltip="Light 3: Green color"),
+                io.Int.Input("light3_color_b", default=120, min=0, max=255, step=1, optional=True, tooltip="Light 3: Blue color"),
+                io.Float.Input("light3_intensity", default=0.5, min=0.0, max=3.0, step=0.1, optional=True, tooltip="Light 3: Intensity (Colored mode)"),
+            ],
+            outputs=[
+                io.Image.Output(display_name="image"),
+                io.Mask.Output(display_name="mask"),
+                io.Image.Output(display_name="debug_image"),
+            ]
+        )
 
     # --- Utility Functions ---
 
-    def _load_preset(self, preset_name, current_params):
+    @classmethod
+    def _load_preset(cls, preset_name, current_params):
         """Loads preset values, respecting 'preserve_positioning'."""
-        # (Unchanged)
-        if preset_name == "None" or preset_name not in self.PRESETS: return current_params
-        preset_data = self.PRESETS[preset_name]; print(f"Applying preset: {preset_name}")
+        if preset_name == "None" or preset_name not in cls.PRESETS: return current_params
+        preset_data = cls.PRESETS[preset_name]; print(f"Applying preset: {preset_name}")
         updated_params = current_params.copy(); original_pos = { k: current_params.get(k) for k in current_params if 'position' in k }
         for key, value in preset_data.items():
             if key in updated_params: updated_params[key] = value
@@ -173,18 +179,18 @@ class ReLight:
                 if value is not None: updated_params[key] = value
         return updated_params
 
-    def create_circle_mask(self, width, height, center_x, center_y, radius):
+    @classmethod
+    def create_circle_mask(cls, width, height, center_x, center_y, radius):
         """Create a circular mask using NumPy."""
-        # (Unchanged)
         y_coords, x_coords = np.mgrid[0:height, 0:width]; center_x_px, center_y_px = center_x * width, center_y * height
         radius_px = radius * min(width, height)
         if radius_px <= 0: return torch.zeros((height, width), dtype=torch.float32)
         dist_sq = (x_coords - center_x_px)**2 + (y_coords - center_y_px)**2
         mask = (dist_sq <= radius_px**2).astype(np.float32); return torch.from_numpy(mask)
 
-    def create_gradient_mask(self, width, height, center_x, center_y, radius, direction_angle_deg=0):
+    @classmethod
+    def create_gradient_mask(cls, width, height, center_x, center_y, radius, direction_angle_deg=0):
         """Create a gradient mask with direction using NumPy."""
-        # (Unchanged)
         y_coords, x_coords = np.mgrid[0:height, 0:width]; center_x_px, center_y_px = center_x * width, center_y * height
         radius_px = radius * min(width, height)
         if radius_px <= 0: return torch.zeros((height, width), dtype=torch.float32)
@@ -195,9 +201,9 @@ class ReLight:
         falloff = np.clip(1 - distances / radius_px, 0, 1)
         mask = np.where(distances <= radius_px, falloff * gradient_intensity, 0).astype(np.float32); return torch.from_numpy(mask)
 
-    def apply_color_correction(self, image_tensor, brightness=0, contrast=0, saturation=0, temperature=0, tint=0, gamma=1.0):
+    @classmethod
+    def apply_color_correction(cls, image_tensor, brightness=0, contrast=0, saturation=0, temperature=0, tint=0, gamma=1.0):
         """Apply color correction adjustments using PIL."""
-        # (Unchanged)
         corrected_batch = []; image_tensor_cpu = image_tensor.cpu()
         for i in range(image_tensor_cpu.shape[0]):
             img_np = (image_tensor_cpu[i].numpy() * 255).astype(np.uint8); pil_mode = 'RGB'; pil_img = None
@@ -223,9 +229,9 @@ class ReLight:
             corrected_batch.append(torch.from_numpy(np_corrected))
         return torch.stack(corrected_batch).to(image_tensor.device)
 
-    def apply_mask_blur(self, mask_tensor, blur_amount):
+    @classmethod
+    def apply_mask_blur(cls, mask_tensor, blur_amount):
         """Apply Gaussian blur to a mask tensor using PIL."""
-        # (Unchanged)
         if blur_amount <= 0.1: return mask_tensor
         mask_np = mask_tensor.cpu().numpy(); blur_radius = blur_amount / 5.0
         if blur_radius <= 0: return mask_tensor
@@ -235,9 +241,9 @@ class ReLight:
         mask_np_blurred = np.array(mask_pil_blurred).astype(np.float32) / 255.0
         return torch.from_numpy(mask_np_blurred).to(mask_tensor.device)
 
-    def apply_colored_light(self, image, mask, color_rgb, intensity=1.0):
+    @classmethod
+    def apply_colored_light(cls, image, mask, color_rgb, intensity=1.0):
         """Apply additive colored light using a mask."""
-        # (Unchanged)
         if intensity <= 0: return image
         color_norm = torch.tensor([c / 255.0 for c in color_rgb], device=image.device, dtype=torch.float32)
         color_light = color_norm.view(1, 1, 1, 3)
@@ -246,7 +252,8 @@ class ReLight:
         result = image + color_light * intensity * mask
         return torch.clamp(result, 0.0, 1.0)
 
-    def calculate_rim_mask(self, light_mask_np, fg_mask_np, light_position_x, light_position_y):
+    @classmethod
+    def calculate_rim_mask(cls, light_mask_np, fg_mask_np, light_position_x, light_position_y):
         """
         Calculates the raw (unblurred, unamplified) rim mask.
 
@@ -303,8 +310,8 @@ class ReLight:
 
         print(f"    - Raw rim mask calculated: Max intensity = {final_mask_np.max():.3f}"); return final_mask_np
 
-
-    def create_debug_image(self, original_image, all_inner_base_masks, all_outer_base_masks, light_sources, fg_mask=None):
+    @classmethod
+    def create_debug_image(cls, original_image, all_inner_base_masks, all_outer_base_masks, light_sources, fg_mask=None):
         """Create a debug visualization showing base masks and light positions."""
         # Reverted to show base masks like reference image
         print("--- Creating Debug Image (v7 - Base Masks) ---") # Version updated
@@ -433,7 +440,8 @@ class ReLight:
 
     # --- Main Execution Function ---
 
-    def relight_image(self, image: torch.Tensor, **kwargs):
+    @classmethod
+    def execute(cls, image: torch.Tensor, **kwargs) -> io.NodeOutput:
         """Applies relighting effects to the input image based on parameters."""
         start_time = time.time()
         image = image.to(dtype=torch.float32)
@@ -444,7 +452,7 @@ class ReLight:
         print(f"Input Image: {width}x{height}, Batch: {batch_size}, Device: {device}, Shape: {image.shape}") # Log shape
 
         params = kwargs.copy()
-        params = self._load_preset(params.get('preset', 'None'), params)
+        params = cls._load_preset(params.get('preset', 'None'), params)
 
         # Extract parameters using the reordered structure
         preset=params.get('preset','None')
@@ -534,12 +542,12 @@ class ReLight:
             print(f"\nProcessing Light Source {light['id']}...")
 
             # --- Create Base Light Masks ---
-            inner_mask_base = self.create_circle_mask(width, height, light["position_x"], light["position_y"], light["inner_radius"]).to(device)
-            outer_mask_base = self.create_circle_mask(width, height, light["position_x"], light["position_y"], light["outer_radius"]).to(device)
+            inner_mask_base = cls.create_circle_mask(width, height, light["position_x"], light["position_y"], light["inner_radius"]).to(device)
+            outer_mask_base = cls.create_circle_mask(width, height, light["position_x"], light["position_y"], light["outer_radius"]).to(device)
             if use_gradient_mode:
                  center_x, center_y = 0.5, 0.5; dx = light["position_x"] - center_x; dy = light["position_y"] - center_y; angle = math.degrees(math.atan2(dy, dx))
-                 inner_mask_base = self.create_gradient_mask(width, height, light["position_x"], light["position_y"], light["inner_radius"], angle).to(device)
-                 outer_mask_base = self.create_gradient_mask(width, height, light["position_x"], light["position_y"], light["outer_radius"], angle).to(device)
+                 inner_mask_base = cls.create_gradient_mask(width, height, light["position_x"], light["position_y"], light["inner_radius"], angle).to(device)
+                 outer_mask_base = cls.create_gradient_mask(width, height, light["position_x"], light["position_y"], light["outer_radius"], angle).to(device)
 
             # Store base masks for potential debug use
             all_inner_base_masks_for_debug.append(inner_mask_base)
@@ -555,7 +563,7 @@ class ReLight:
                 light_mask_np = outer_mask_base.cpu().numpy() # Base for rim calculation
 
                 # Calculate Raw Rim Mask
-                raw_rim_mask_np = self.calculate_rim_mask(light_mask_np, fg_mask_np, light["position_x"], light["position_y"])
+                raw_rim_mask_np = cls.calculate_rim_mask(light_mask_np, fg_mask_np, light["position_x"], light["position_y"])
                 # Amplify the raw rim mask component
                 amplified_raw_rim_mask_np = np.clip(raw_rim_mask_np * rim_amplification, 0.0, 1.0)
                 amplified_raw_rim_mask = torch.from_numpy(amplified_raw_rim_mask_np).to(device)
@@ -571,7 +579,7 @@ class ReLight:
                 print(f"    - Combined Rim(Amp)+BG mask (unblurred): Max={torch.max(combined_mask_unblurred):.3f}")
 
                 # Apply blur to the combined mask
-                final_light_mask = self.apply_mask_blur(combined_mask_unblurred, mask_blur) if mask_blur > 0.1 else combined_mask_unblurred
+                final_light_mask = cls.apply_mask_blur(combined_mask_unblurred, mask_blur) if mask_blur > 0.1 else combined_mask_unblurred
                 print(f"  Final Behind Subject Mask (Blurred): Max={torch.max(final_light_mask):.3f}, Mean={torch.mean(final_light_mask):.3f}")
 
             elif occlusion_active and light_direction == "In Front of Subject":
@@ -587,7 +595,7 @@ class ReLight:
                  combined_mask_unblurred_np = light_mask_np * occlusion_factor_mask_np
                  combined_mask_unblurred = torch.from_numpy(np.clip(combined_mask_unblurred_np, 0, 1)).to(device)
 
-                 final_light_mask = self.apply_mask_blur(combined_mask_unblurred, mask_blur) if mask_blur > 0.1 else combined_mask_unblurred
+                 final_light_mask = cls.apply_mask_blur(combined_mask_unblurred, mask_blur) if mask_blur > 0.1 else combined_mask_unblurred
                  print(f"  Final Front Subject Mask: Max={torch.max(final_light_mask):.3f}, Mean={torch.mean(final_light_mask):.3f}")
 
             else: # Standard (No Occlusion) or Occlusion Inactive
@@ -597,7 +605,7 @@ class ReLight:
                 # Calculate standard inner/outer falloff mask
                 ring_mask_base = torch.clamp(outer_mask_base - inner_mask_base, 0, 1)
                 combined_mask_unblurred = torch.clamp(inner_mask_base + ring_mask_base, 0, 1) # Represents full light area with falloff
-                final_light_mask = self.apply_mask_blur(combined_mask_unblurred, mask_blur) if mask_blur > 0.1 else combined_mask_unblurred
+                final_light_mask = cls.apply_mask_blur(combined_mask_unblurred, mask_blur) if mask_blur > 0.1 else combined_mask_unblurred
                 print(f"  Final Standard Mask: Max={torch.max(final_light_mask):.3f}, Mean={torch.mean(final_light_mask):.3f}")
 
             # --- Apply Lighting Effect using the single final_light_mask ---
@@ -606,7 +614,7 @@ class ReLight:
                 if use_colored_lights:
                     print(f"  Applying colored light (RGB: {light['color']}, Intensity: {light['intensity']:.2f})...")
                     effective_intensity = light['intensity'] * effect_strength
-                    result_tensor = self.apply_colored_light(result_tensor, final_mask_expanded, light['color'], effective_intensity)
+                    result_tensor = cls.apply_colored_light(result_tensor, final_mask_expanded, light['color'], effective_intensity)
                 else: # Color Correction
                     print("  Applying color correction...")
                     # Use INNER parameters when applying a single combined mask
@@ -616,7 +624,7 @@ class ReLight:
                     inner_saturation=params.get('inner_saturation',0)*effect_strength; inner_temperature=params.get('inner_temperature',0)*effect_strength
                     inner_tint=params.get('inner_tint',0)*effect_strength; inner_gamma=params.get('inner_gamma',1.0)
                     print(f"    Using Inner Corr Params: B={inner_brightness:.1f} C={inner_contrast:.1f} S={inner_saturation:.1f} ...")
-                    corrected_image = self.apply_color_correction(result_tensor, inner_brightness, inner_contrast, inner_saturation, inner_temperature, inner_tint, inner_gamma)
+                    corrected_image = cls.apply_color_correction(result_tensor, inner_brightness, inner_contrast, inner_saturation, inner_temperature, inner_tint, inner_gamma)
                     result_tensor = result_tensor * (1.0 - final_mask_expanded) + corrected_image * final_mask_expanded
             else:
                  print("  Skipping light application (final mask is near-empty).")
@@ -649,7 +657,7 @@ class ReLight:
             print("Attempting debug visualization...")
             if all_inner_base_masks_for_debug and all_outer_base_masks_for_debug:
                  fg_mask_for_debug = fg_mask if fg_mask is not None else None
-                 debug_image = self.create_debug_image(
+                 debug_image = cls.create_debug_image(
                      image,
                      all_inner_base_masks_for_debug, # Pass BASE inner masks
                      all_outer_base_masks_for_debug, # Pass BASE outer masks
@@ -677,8 +685,16 @@ class ReLight:
              print(f"Warn: Debug image has batch size {debug_image.shape[0]}. Taking first item.")
              debug_image = debug_image[0:1]
 
-        return (final_result, original_input_mask, debug_image)
+        return io.NodeOutput(final_result, original_input_mask, debug_image)
 
-# --- Node Registration ---
-NODE_CLASS_MAPPINGS = { "ReLight": ReLight }
-NODE_DISPLAY_NAME_MAPPINGS = { "ReLight": "ReLight 💡" }
+# --- v3 Extension Registration ---
+class ReLightExtension(ComfyExtension):
+    """ComfyUI Extension for ReLight node."""
+
+    async def get_node_list(self) -> list[type[io.ComfyNode]]:
+        """Return list of nodes provided by this extension."""
+        return [ReLight]
+
+async def comfy_entrypoint() -> ReLightExtension:
+    """Entry point for ComfyUI v3."""
+    return ReLightExtension()

@@ -170,11 +170,11 @@ class ReLight(io.ComfyNode):
         """Loads preset values, respecting 'preserve_positioning'."""
         if preset_name == "None" or preset_name not in cls.PRESETS: return current_params
         preset_data = cls.PRESETS[preset_name]; print(f"Applying preset: {preset_name}")
-        updated_params = current_params.copy(); original_pos = { k: current_params.get(k) for k in current_params if 'position' in k }
+        updated_params = current_params.copy(); original_pos = { k: current_params.get(k) for k in current_params if 'position' in k or 'radius' in k }
         for key, value in preset_data.items():
             if key in updated_params: updated_params[key] = value
         if updated_params.get("preserve_positioning", True):
-            print("  - Preserving user-defined light positions.")
+            print("  - Preserving user-defined light positions and radii.")
             for key, value in original_pos.items():
                 if value is not None: updated_params[key] = value
         return updated_params

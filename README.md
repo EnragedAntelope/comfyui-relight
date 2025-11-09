@@ -2,10 +2,13 @@
 
 ![Platform](https://img.shields.io/badge/Platform-ComfyUI-blue)
 ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![ComfyUI v3](https://img.shields.io/badge/ComfyUI-v3%20Compatible-green)
 
 > **Transform your images with cinematic lighting effects in a single click!**
 
 ReLight is a powerful custom node for ComfyUI that adds professional-grade lighting capabilities to your images. Create dramatic shadows, natural window lighting, warm sunset glows, or striking rim effects with precise control over every aspect of your lighting setup.
+
+**Now fully compatible with ComfyUI v3 schema!**
 ![ReLight Node Example](https://github.com/user-attachments/assets/34fa5b9f-65e6-4953-8bd4-65a349ed9455)
 
 ## 🌟 Features
@@ -264,6 +267,14 @@ MIT License - Feel free to use in personal and commercial projects
 Contributions are welcome! Please feel free to submit a Pull Request.
 
 ### 🔄 Updates
+
+- **v2.0.0** - ComfyUI v3 Migration
+  - Fully migrated to ComfyUI v3 schema
+  - Updated to use new io.ComfyNode base class
+  - Converted INPUT_TYPES to define_schema with proper type objects
+  - All methods converted to classmethods for v3 compatibility
+  - Updated outputs to use proper display_name labels
+  - Modernized extension registration with ComfyExtension and comfy_entrypoint
 
 - **v1.0** - Initial Release
   - Added support for multiple light sources

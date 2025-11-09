@@ -1,7 +1,7 @@
 [project]
 name = "ReLight"
 description = "Transform your images with cinematic lighting effects in a single click! ReLight is a powerful ComfyUI v3 compatible node that adds professional-grade lighting capabilities including multiple light sources, rim lighting, and 3D lighting simulation."
-version = "2.0.0"
+version = "2.0.1"
 license = {file = "LICENSE"}
 dependencies = ["torch", "numpy", "Pillow", "scipy"]
 
@@ -13,3 +13,4 @@ Repository = "https://github.com/EnragedAntelope/comfyui-relight"
 PublisherId = "enragedantelope"
 DisplayName = "ComfyUI-ReLight"
 Icon = ""
+

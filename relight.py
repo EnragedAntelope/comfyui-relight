@@ -1,18 +1,18 @@
-import torch
-import numpy as np
-from PIL import Image, ImageFilter, ImageOps, ImageEnhance, ImageDraw, ImageFont
-import comfy.utils
-# SciPy is now required for optimal rim lighting
-from scipy import ndimage
+import logging
 import math
-import json
-import os
-import time  # For debugging
-import inspect # For mask finding hack
-import traceback # For detailed error logging
+import time
+import traceback
+
+import numpy as np
+import torch
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
+# SciPy is required for rim lighting and occlusion smoothing
+from scipy import ndimage
 
 # Import v3 ComfyUI API
-from comfy_api.latest import ComfyExtension, io, ui
+from comfy_api.latest import ComfyExtension, io
+
+logger = logging.getLogger("ComfyUI-ReLight")
 
 
 class ReLight(io.ComfyNode):
@@ -90,7 +90,7 @@ class ReLight(io.ComfyNode):
             inputs=[
                 # --- Core Inputs ---
                 io.Image.Input("image", tooltip="The input image to apply lighting effects to"),
-                io.Mask.Input("mask", tooltip="Foreground mask (white=subject, black=background). Required for occlusion ('Apply 3D Lighting') and optional compositing ('Remove Background')"),
+                io.Mask.Input("mask", optional=True, tooltip="Foreground mask (white=subject, black=background). Required for occlusion ('Apply 3D Lighting') and optional compositing ('Remove Background')"),
 
                 # --- Global Behavior ---
                 io.Combo.Input("preset", options=list(cls.PRESETS.keys()), default="None", tooltip="Select a preset or 'None' for custom settings"),
@@ -157,9 +157,9 @@ class ReLight(io.ComfyNode):
                 io.Float.Input("light3_intensity", default=0.5, min=0.0, max=3.0, step=0.1, optional=True, tooltip="Light 3: Intensity (Colored mode)"),
             ],
             outputs=[
-                io.Image.Output(display_name="image"),
-                io.Mask.Output(display_name="mask"),
-                io.Image.Output(display_name="debug_image"),
+                io.Image.Output("image", display_name="image", tooltip="The relit image"),
+                io.Mask.Output("mask", display_name="mask", tooltip="Pass-through of the input mask (black if none connected)"),
+                io.Image.Output("debug_image", display_name="debug_image", tooltip="Visualization of light positions and masks (enable 'show_debug_info')"),
             ]
         )
 
@@ -169,12 +169,12 @@ class ReLight(io.ComfyNode):
     def _load_preset(cls, preset_name, current_params):
         """Loads preset values, respecting 'preserve_positioning'."""
         if preset_name == "None" or preset_name not in cls.PRESETS: return current_params
-        preset_data = cls.PRESETS[preset_name]; print(f"Applying preset: {preset_name}")
+        preset_data = cls.PRESETS[preset_name]; logger.debug(f"Applying preset: {preset_name}")
         updated_params = current_params.copy(); original_pos = { k: current_params.get(k) for k in current_params if 'position' in k or 'radius' in k }
         for key, value in preset_data.items():
             if key in updated_params: updated_params[key] = value
         if updated_params.get("preserve_positioning", True):
-            print("  - Preserving user-defined light positions and radii.")
+            logger.debug("  - Preserving user-defined light positions and radii.")
             for key, value in original_pos.items():
                 if value is not None: updated_params[key] = value
         return updated_params
@@ -187,6 +187,23 @@ class ReLight(io.ComfyNode):
         if radius_px <= 0: return torch.zeros((height, width), dtype=torch.float32)
         dist_sq = (x_coords - center_x_px)**2 + (y_coords - center_y_px)**2
         mask = (dist_sq <= radius_px**2).astype(np.float32); return torch.from_numpy(mask)
+
+    @classmethod
+    def create_falloff_mask(cls, width, height, center_x, center_y, inner_radius, outer_radius):
+        """Create a radial mask: 1.0 inside inner radius, linear falloff to 0.0 at outer radius."""
+        y_coords, x_coords = np.mgrid[0:height, 0:width]
+        center_x_px, center_y_px = center_x * width, center_y * height
+        inner_px = max(inner_radius, 0.0) * min(width, height)
+        outer_px = max(outer_radius, 0.0) * min(width, height)
+        if outer_px <= 0:
+            return torch.zeros((height, width), dtype=torch.float32)
+        distances = np.sqrt((x_coords - center_x_px)**2 + (y_coords - center_y_px)**2)
+        if outer_px <= inner_px:
+            # Degenerate ring: hard circle at outer radius
+            mask = (distances <= outer_px).astype(np.float32)
+        else:
+            mask = np.clip((outer_px - distances) / (outer_px - inner_px), 0.0, 1.0).astype(np.float32)
+        return torch.from_numpy(mask)
 
     @classmethod
     def create_gradient_mask(cls, width, height, center_x, center_y, radius, direction_angle_deg=0):
@@ -210,7 +227,7 @@ class ReLight(io.ComfyNode):
             if len(img_np.shape) == 3 and img_np.shape[2] == 1: pil_img = Image.fromarray(img_np.squeeze(-1), mode='L'); pil_mode = 'L'
             elif len(img_np.shape) == 3 and img_np.shape[2] >= 3: pil_img = Image.fromarray(img_np[..., :3], mode='RGB')
             elif len(img_np.shape) == 2: pil_img = Image.fromarray(img_np, mode='L'); pil_mode = 'L'
-            else: print(f"Warn: Unexpected shape {img_np.shape}"); corrected_batch.append(image_tensor_cpu[i]); continue
+            else: logger.warning(f"Unexpected image shape {img_np.shape}"); corrected_batch.append(image_tensor_cpu[i]); continue
             if abs(brightness) > 0.1: pil_img = ImageEnhance.Brightness(pil_img).enhance(1.0 + (brightness / 100.0))
             if abs(contrast) > 0.1: pil_img = ImageEnhance.Contrast(pil_img).enhance(1.0 + (contrast / 100.0))
             if abs(saturation) > 0.1 and pil_mode == 'RGB': pil_img = ImageEnhance.Color(pil_img).enhance(1.0 + (saturation / 100.0))
@@ -237,7 +254,7 @@ class ReLight(io.ComfyNode):
         if blur_radius <= 0: return mask_tensor
         mask_pil = Image.fromarray((mask_np * 255).astype(np.uint8))
         try: mask_pil_blurred = mask_pil.filter(ImageFilter.GaussianBlur(radius=blur_radius))
-        except ValueError: print(f"Warn: Blur failed (r={blur_radius})"); return mask_tensor
+        except ValueError: logger.warning(f"Mask blur failed (radius={blur_radius})"); return mask_tensor
         mask_np_blurred = np.array(mask_pil_blurred).astype(np.float32) / 255.0
         return torch.from_numpy(mask_np_blurred).to(mask_tensor.device)
 
@@ -288,7 +305,7 @@ class ReLight(io.ComfyNode):
              edge_magnitude /= max_edge
         else:
             # If no edges are found, return an empty mask
-            print("Warn: No edges detected for rim mask.")
+            logger.warning("No edges detected for rim mask.")
             return np.zeros_like(light_mask_np)
 
         # Enhance edges slightly using a power function (value < 1 thickens/brightens)
@@ -308,13 +325,13 @@ class ReLight(io.ComfyNode):
         directional_factor = np.clip((-dot_product + 1) / 2, 0, 1); directional_factor = np.power(directional_factor, 1.5)
         rim_light_modulated = rim_light_raw * directional_factor; final_mask_np = np.clip(rim_light_modulated, 0.0, 1.0)
 
-        print(f"    - Raw rim mask calculated: Max intensity = {final_mask_np.max():.3f}"); return final_mask_np
+        logger.debug(f"    - Raw rim mask calculated: Max intensity = {final_mask_np.max():.3f}"); return final_mask_np
 
     @classmethod
     def create_debug_image(cls, original_image, all_inner_base_masks, all_outer_base_masks, light_sources, fg_mask=None):
         """Create a debug visualization showing base masks and light positions."""
         # Reverted to show base masks like reference image
-        print("--- Creating Debug Image (v7 - Base Masks) ---") # Version updated
+        logger.debug("--- Creating Debug Image (v7 - Base Masks) ---") # Version updated
         try:
             img_tensor = original_image[0].cpu()
             if fg_mask is not None: fg_mask_tensor = fg_mask[0].cpu()
@@ -326,7 +343,7 @@ class ReLight(io.ComfyNode):
             img_np = (img_tensor.numpy() * 255).astype(np.uint8)
             pil_img = Image.fromarray(img_np).convert('RGBA')
             width, height = pil_img.size
-            print(f"  Base image size: {width}x{height}")
+            logger.debug(f"  Base image size: {width}x{height}")
 
             # --- Create Overlays ---
             inner_overlay_img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
@@ -343,10 +360,10 @@ class ReLight(io.ComfyNode):
                         inner_overlay_np[..., 0] = 255 # R
                         inner_overlay_np[..., 3] = inner_alpha
                         inner_overlay_img = Image.fromarray(inner_overlay_np, 'RGBA')
-                        print(f"  Inner mask overlay created. Max Alpha: {np.max(inner_alpha)}")
-                    else: print("  Skipping inner mask overlay (empty).")
-                else: print("  Skipping inner mask overlay (no mask provided).")
-            except Exception as e: print(f"  ERROR creating inner mask overlay: {e}"); traceback.print_exc()
+                        logger.debug(f"  Inner mask overlay created. Max Alpha: {np.max(inner_alpha)}")
+                    else: logger.debug("  Skipping inner mask overlay (empty).")
+                else: logger.debug("  Skipping inner mask overlay (no mask provided).")
+            except Exception as e: logger.error(f"  ERROR creating inner mask overlay: {e}"); traceback.print_exc()
 
             # Ring Mask Overlay (Blue)
             try:
@@ -359,10 +376,10 @@ class ReLight(io.ComfyNode):
                         ring_overlay_np[..., 2] = 255 # B
                         ring_overlay_np[..., 3] = ring_alpha
                         ring_overlay_img = Image.fromarray(ring_overlay_np, 'RGBA')
-                        print(f"  Ring mask overlay created. Max Alpha: {np.max(ring_alpha)}")
-                    else: print("  Skipping ring mask overlay (empty).")
-                else: print("  Skipping ring mask overlay (missing base masks).")
-            except Exception as e: print(f"  ERROR creating ring mask overlay: {e}"); traceback.print_exc()
+                        logger.debug(f"  Ring mask overlay created. Max Alpha: {np.max(ring_alpha)}")
+                    else: logger.debug("  Skipping ring mask overlay (empty).")
+                else: logger.debug("  Skipping ring mask overlay (missing base masks).")
+            except Exception as e: logger.error(f"  ERROR creating ring mask overlay: {e}"); traceback.print_exc()
 
             # Foreground Mask Overlay (Green)
             try:
@@ -370,11 +387,11 @@ class ReLight(io.ComfyNode):
                     fg_mask_np = fg_mask_tensor.numpy()
                     fg_alpha = (fg_mask_np * 100).astype(np.uint8) # Alpha 0-100
                     if np.max(fg_alpha) > 0:
-                        print(f"  FG mask stats: Min={np.min(fg_mask_np):.3f}, Max={np.max(fg_mask_np):.3f}, Mean={np.mean(fg_mask_np):.3f}")
+                        logger.debug(f"  FG mask stats: Min={np.min(fg_mask_np):.3f}, Max={np.max(fg_mask_np):.3f}, Mean={np.mean(fg_mask_np):.3f}")
                         fg_overlay_np = np.zeros((height, width, 4), dtype=np.uint8); fg_overlay_np[..., 1] = 255; fg_overlay_np[..., 3] = fg_alpha
-                        fg_overlay_img = Image.fromarray(fg_overlay_np, 'RGBA'); print(f"  FG mask overlay created. Max Alpha: {np.max(fg_alpha)}")
-                    else: print("  Skipping FG mask overlay (mask is empty).")
-            except Exception as e: print(f"  ERROR creating FG mask overlay: {e}"); traceback.print_exc()
+                        fg_overlay_img = Image.fromarray(fg_overlay_np, 'RGBA'); logger.debug(f"  FG mask overlay created. Max Alpha: {np.max(fg_alpha)}")
+                    else: logger.debug("  Skipping FG mask overlay (mask is empty).")
+            except Exception as e: logger.error(f"  ERROR creating FG mask overlay: {e}"); traceback.print_exc()
 
             # --- Composite Overlays ---
             debug_img = pil_img # Start with original
@@ -383,17 +400,17 @@ class ReLight(io.ComfyNode):
                 debug_img = Image.alpha_composite(debug_img, fg_overlay_img)
                 debug_img = Image.alpha_composite(debug_img, inner_overlay_img)
                 debug_img = Image.alpha_composite(debug_img, ring_overlay_img)
-                print("  Overlays composited.")
-            except Exception as e: print(f"  ERROR compositing overlays: {e}"); traceback.print_exc()
+                logger.debug("  Overlays composited.")
+            except Exception as e: logger.error(f"  ERROR compositing overlays: {e}"); traceback.print_exc()
 
             # --- Draw Indicators & Legend ---
             draw_debug = ImageDraw.Draw(debug_img); font = None; font_size = 10
             try: font = ImageFont.load_default(size=12); font_size = 12
             except Exception:
                 try: font = ImageFont.load_default(); font_size = 10
-                except Exception as font_err: print(f"  Warn: Could not load default font: {font_err}")
-            print(f"  Using font: {type(font)}, size: {font_size}")
-            print(f"  Drawing indicators for {len(light_sources)} light source(s)...")
+                except Exception as font_err: logger.warning(f"  Warn: Could not load default font: {font_err}")
+            logger.debug(f"  Using font: {type(font)}, size: {font_size}")
+            logger.debug(f"  Drawing indicators for {len(light_sources)} light source(s)...")
             for i, light in enumerate(light_sources):
                 try:
                     x, y = int(light["position_x"] * width), int(light["position_y"] * height); color = tuple(light.get("color", [255, 255, 255])) + (220,)
@@ -407,8 +424,8 @@ class ReLight(io.ComfyNode):
                     label = f"L{i+1}"; text_pos = (x + 10, y - font_size // 2 - 2)
                     if font: bbox = draw_debug.textbbox(text_pos, label, font=font); draw_debug.rectangle(bbox, fill=(0, 0, 0, 180)); draw_debug.text(text_pos, label, fill=(255, 255, 255, 230), font=font)
                     else: draw_debug.text(text_pos, label, fill=(255, 255, 255, 230))
-                except Exception as draw_err: print(f"    ERROR drawing indicator/text for light {i+1}: {draw_err}"); traceback.print_exc()
-            print("  Light indicators drawn.")
+                except Exception as draw_err: logger.error(f"    ERROR drawing indicator/text for light {i+1}: {draw_err}"); traceback.print_exc()
+            logger.debug("  Light indicators drawn.")
             try:
                 legend_items = [ ("Inner Mask Area", (255, 0, 0, 128)), ("Outer Mask Area (Ring)", (0, 0, 255, 128)) ] # Red, Blue
                 if fg_mask_tensor is not None: legend_items.append(("Foreground Mask", (0, 255, 0, 100))) # Green
@@ -422,20 +439,20 @@ class ReLight(io.ComfyNode):
                 for text, color in legend_items:
                     draw_debug.rectangle((legend_x, legend_y, legend_x + 12, legend_y + 12), fill=color)
                     draw_debug.text((legend_x + 18, legend_y + 1), text, fill=(255, 255, 255, 220), font=font); legend_y += line_height
-                print("  Legend drawn.")
-            except Exception as legend_err: print(f"  ERROR drawing legend: {legend_err}"); traceback.print_exc()
+                logger.debug("  Legend drawn.")
+            except Exception as legend_err: logger.error(f"  ERROR drawing legend: {legend_err}"); traceback.print_exc()
 
             # Final conversion
             debug_img_rgb = debug_img.convert('RGB'); debug_np = np.array(debug_img_rgb).astype(np.float32) / 255.0
             # **** DEBUG: Check final numpy array shape ****
-            print(f"  Final debug numpy array shape before tensor conversion: {debug_np.shape}")
+            logger.debug(f"  Final debug numpy array shape before tensor conversion: {debug_np.shape}")
             # **** END DEBUG ****
-            print("--- Debug Image Creation Finished ---")
+            logger.debug("--- Debug Image Creation Finished ---")
             # Ensure output tensor has batch dimension and correct device
             return torch.from_numpy(debug_np).unsqueeze(0).to(original_image.device)
 
         except Exception as e:
-            print(f"--- FATAL ERROR in create_debug_image: {e} ---"); traceback.print_exc()
+            logger.error(f"--- FATAL ERROR in create_debug_image: {e} ---"); traceback.print_exc()
             return torch.zeros_like(original_image[0:1]) # Return black image on any major error
 
     # --- Main Execution Function ---
@@ -448,8 +465,8 @@ class ReLight(io.ComfyNode):
         batch_size, height, width, channels = image.shape
         device = image.device
 
-        print(f"\n--- ReLight Node ---")
-        print(f"Input Image: {width}x{height}, Batch: {batch_size}, Device: {device}, Shape: {image.shape}") # Log shape
+        logger.debug("\n--- ReLight Node ---")
+        logger.debug(f"Input Image: {width}x{height}, Batch: {batch_size}, Device: {device}, Shape: {image.shape}") # Log shape
 
         params = kwargs.copy()
         params = cls._load_preset(params.get('preset', 'None'), params)
@@ -466,10 +483,10 @@ class ReLight(io.ComfyNode):
         use_gradient_mode=params.get('use_gradient_mode',False)
         mask_blur=params.get('mask_blur',50.0)
         show_debug_info=params.get('show_debug_info',False)
-        input_mask=params.get('mask',None) # Mask is now required, but keep checking None for safety
+        input_mask=params.get('mask',None) # Optional input
 
-        print(f"Mode: Preset='{preset}', 3D Lighting={apply_3d_lighting}, Direction='{light_direction}', Colored={use_colored_lights}, Gradient={use_gradient_mode}")
-        print(f"Settings: Strength={effect_strength:.2f}, Rim Amp={rim_amplification:.2f}, Mask Blur={mask_blur:.1f}, Debug={show_debug_info}")
+        logger.debug(f"Mode: Preset='{preset}', 3D Lighting={apply_3d_lighting}, Direction='{light_direction}', Colored={use_colored_lights}, Gradient={use_gradient_mode}")
+        logger.debug(f"Settings: Strength={effect_strength:.2f}, Rim Amp={rim_amplification:.2f}, Mask Blur={mask_blur:.1f}, Debug={show_debug_info}")
 
         # --- Mask Handling ---
         fg_mask=None; original_input_mask=None
@@ -477,9 +494,9 @@ class ReLight(io.ComfyNode):
         needs_mask = apply_3d_lighting or remove_background
 
         if needs_mask:
-            print("Processing mask input...")
+            logger.debug("Processing mask input...")
             if input_mask is not None:
-                print(f"  - Using mask. Shape:{input_mask.shape}, Type:{input_mask.dtype}")
+                logger.debug(f"  - Using mask. Shape:{input_mask.shape}, Type:{input_mask.dtype}")
                 original_input_mask=input_mask.clone()
                 fg_mask=input_mask.to(device=device,dtype=torch.float32)
                 # Standardize mask shape
@@ -491,17 +508,16 @@ class ReLight(io.ComfyNode):
                 elif len(fg_mask.shape)==2: fg_mask=fg_mask.unsqueeze(0)
                 # Match batch size
                 if fg_mask.shape[0]!=batch_size:
-                    print(f"  - Warn: Mask batch mismatch. Repeating.")
+                    logger.warning("  - Warn: Mask batch mismatch. Repeating.")
                     fg_mask=fg_mask[0:1].repeat(batch_size,1,1)
-                # Check inversion
+                # Sanity check: warn (but never silently invert) if the mask looks inverted
                 mean_val=torch.mean(fg_mask).item()
-                if mean_val>0.8 and mean_val<0.999:
-                    print(f"  - Mask inverted (mean={mean_val:.3f}).")
-                    fg_mask=1.0-fg_mask
-                print(f"  - Final fg_mask shape:{fg_mask.shape}, Min={torch.min(fg_mask):.3f}, Max={torch.max(fg_mask):.3f}, Mean={torch.mean(fg_mask):.3f}")
+                if mean_val>0.9:
+                    logger.warning(f"ReLight: mask is {mean_val*100:.0f}% white. If your subject appears unlit, the mask may be inverted (expected: white=subject, black=background).")
+                logger.debug(f"  - Final fg_mask shape:{fg_mask.shape}, Min={torch.min(fg_mask):.3f}, Max={torch.max(fg_mask):.3f}, Mean={torch.mean(fg_mask):.3f}")
             else:
                 # If mask is needed but not provided, disable features that require it
-                print("  - Error: Mask input required for 'Apply 3D Lighting' or 'Remove Background'. Disabling these features.")
+                logger.info("ReLight: no mask connected - disabling 'Apply 3D Lighting' and 'Remove Background' for this run.")
                 apply_3d_lighting = False
                 remove_background = False # Set remove_background to false as well
                 original_input_mask=torch.zeros((batch_size,height,width),device=device,dtype=torch.float32)
@@ -529,7 +545,7 @@ class ReLight(io.ComfyNode):
                       "inner_radius": params.get(inner_r_key, 0.3), "outer_radius": params.get(outer_r_key, 0.6),
                       "color": [int(params.get(color_r_key, 255)), int(params.get(color_g_key, 255)), int(params.get(color_b_key, 255))],
                       "intensity": params.get(intensity_key, 1.0) }
-            light_sources.append(light); print(f"Defined Light {i}: Pos=({light['position_x']:.2f},{light['position_y']:.2f}), Radii=({light['inner_radius']:.2f},{light['outer_radius']:.2f}), Color={light['color']}, Intensity={light['intensity']:.2f}")
+            light_sources.append(light); logger.debug(f"Defined Light {i}: Pos=({light['position_x']:.2f},{light['position_y']:.2f}), Radii=({light['inner_radius']:.2f},{light['outer_radius']:.2f}), Color={light['color']}, Intensity={light['intensity']:.2f}")
 
 
         # --- Initialize Result & Masks for Debug ---
@@ -539,7 +555,7 @@ class ReLight(io.ComfyNode):
 
         # --- Process Each Light Source ---
         for light in light_sources:
-            print(f"\nProcessing Light Source {light['id']}...")
+            logger.debug(f"\nProcessing Light Source {light['id']}...")
 
             # --- Create Base Light Masks ---
             inner_mask_base = cls.create_circle_mask(width, height, light["position_x"], light["position_y"], light["inner_radius"]).to(device)
@@ -555,10 +571,12 @@ class ReLight(io.ComfyNode):
 
             # --- MASK APPLICATION LOGIC ---
             final_light_mask = torch.zeros_like(inner_mask_base)
+            # Two-zone masks (set only in standard color-correction mode)
+            inner_zone_mask = None; ring_zone_mask = None
             occlusion_active = apply_3d_lighting and fg_mask is not None # Check if mask is actually available
 
             if occlusion_active and light_direction == "Behind Subject":
-                print("  Processing as Behind Subject (Rim + Background Glow)...")
+                logger.debug("  Processing as Behind Subject (Rim + Background Glow)...")
                 fg_mask_np = fg_mask[0].cpu().numpy()
                 light_mask_np = outer_mask_base.cpu().numpy() # Base for rim calculation
 
@@ -567,23 +585,23 @@ class ReLight(io.ComfyNode):
                 # Amplify the raw rim mask component
                 amplified_raw_rim_mask_np = np.clip(raw_rim_mask_np * rim_amplification, 0.0, 1.0)
                 amplified_raw_rim_mask = torch.from_numpy(amplified_raw_rim_mask_np).to(device)
-                print(f"    - Amplified raw rim mask: Max={torch.max(amplified_raw_rim_mask):.3f}")
+                logger.debug(f"    - Amplified raw rim mask: Max={torch.max(amplified_raw_rim_mask):.3f}")
 
                 # Calculate Background Light Mask (occluded by subject)
                 background_base_mask = outer_mask_base
                 background_light_mask = background_base_mask * (1.0 - fg_mask[0])
-                print(f"    - Background light mask calculated: Max={torch.max(background_light_mask):.3f}")
+                logger.debug(f"    - Background light mask calculated: Max={torch.max(background_light_mask):.3f}")
 
                 # Combine Amplified Rim and Background masks (unblurred)
                 combined_mask_unblurred = torch.clamp(amplified_raw_rim_mask + background_light_mask, 0, 1)
-                print(f"    - Combined Rim(Amp)+BG mask (unblurred): Max={torch.max(combined_mask_unblurred):.3f}")
+                logger.debug(f"    - Combined Rim(Amp)+BG mask (unblurred): Max={torch.max(combined_mask_unblurred):.3f}")
 
                 # Apply blur to the combined mask
                 final_light_mask = cls.apply_mask_blur(combined_mask_unblurred, mask_blur) if mask_blur > 0.1 else combined_mask_unblurred
-                print(f"  Final Behind Subject Mask (Blurred): Max={torch.max(final_light_mask):.3f}, Mean={torch.mean(final_light_mask):.3f}")
+                logger.debug(f"  Final Behind Subject Mask (Blurred): Max={torch.max(final_light_mask):.3f}, Mean={torch.mean(final_light_mask):.3f}")
 
             elif occlusion_active and light_direction == "In Front of Subject":
-                 print("  Processing as Front Subject Light...")
+                 logger.debug("  Processing as Front Subject Light...")
                  fg_mask_np = fg_mask[0].cpu().numpy()
                  light_mask_np = outer_mask_base.cpu().numpy() # Base light area
 
@@ -596,38 +614,61 @@ class ReLight(io.ComfyNode):
                  combined_mask_unblurred = torch.from_numpy(np.clip(combined_mask_unblurred_np, 0, 1)).to(device)
 
                  final_light_mask = cls.apply_mask_blur(combined_mask_unblurred, mask_blur) if mask_blur > 0.1 else combined_mask_unblurred
-                 print(f"  Final Front Subject Mask: Max={torch.max(final_light_mask):.3f}, Mean={torch.mean(final_light_mask):.3f}")
+                 logger.debug(f"  Final Front Subject Mask: Max={torch.max(final_light_mask):.3f}, Mean={torch.mean(final_light_mask):.3f}")
 
             else: # Standard (No Occlusion) or Occlusion Inactive
-                if occlusion_active: print("  Processing as Standard Light (Occlusion Direction != Behind/Front)...")
-                else: print("  Processing as Standard Light (Occlusion Inactive)...")
+                if occlusion_active: logger.debug("  Processing as Standard Light (Occlusion Direction != Behind/Front)...")
+                else: logger.debug("  Processing as Standard Light (Occlusion Inactive)...")
 
-                # Calculate standard inner/outer falloff mask
-                ring_mask_base = torch.clamp(outer_mask_base - inner_mask_base, 0, 1)
-                combined_mask_unblurred = torch.clamp(inner_mask_base + ring_mask_base, 0, 1) # Represents full light area with falloff
-                final_light_mask = cls.apply_mask_blur(combined_mask_unblurred, mask_blur) if mask_blur > 0.1 else combined_mask_unblurred
-                print(f"  Final Standard Mask: Max={torch.max(final_light_mask):.3f}, Mean={torch.mean(final_light_mask):.3f}")
+                if use_colored_lights:
+                    # Light area with real falloff: full strength inside the inner
+                    # radius, fading to zero at the outer radius. Gradient masks
+                    # already encode their own falloff.
+                    if use_gradient_mode:
+                        combined_mask_unblurred = outer_mask_base
+                    else:
+                        combined_mask_unblurred = cls.create_falloff_mask(width, height, light["position_x"], light["position_y"], light["inner_radius"], light["outer_radius"]).to(device)
+                    final_light_mask = cls.apply_mask_blur(combined_mask_unblurred, mask_blur) if mask_blur > 0.1 else combined_mask_unblurred
+                else:
+                    # Two-zone color correction: inner_* params apply inside the
+                    # inner mask, outer_* params in the ring between inner and outer.
+                    inner_zone_mask = cls.apply_mask_blur(inner_mask_base, mask_blur) if mask_blur > 0.1 else inner_mask_base
+                    outer_zone_full = cls.apply_mask_blur(outer_mask_base, mask_blur) if mask_blur > 0.1 else outer_mask_base
+                    ring_zone_mask = torch.clamp(outer_zone_full - inner_zone_mask, 0, 1)
+                    final_light_mask = torch.clamp(inner_zone_mask + ring_zone_mask, 0, 1)
+                logger.debug(f"  Final Standard Mask: Max={torch.max(final_light_mask):.3f}, Mean={torch.mean(final_light_mask):.3f}")
 
             # --- Apply Lighting Effect using the single final_light_mask ---
             if torch.max(final_light_mask) > 1e-4: # Only apply if mask has significant values
                 final_mask_expanded = final_light_mask.unsqueeze(0).unsqueeze(-1).expand_as(result_tensor)
                 if use_colored_lights:
-                    print(f"  Applying colored light (RGB: {light['color']}, Intensity: {light['intensity']:.2f})...")
+                    logger.debug(f"  Applying colored light (RGB: {light['color']}, Intensity: {light['intensity']:.2f})...")
                     effective_intensity = light['intensity'] * effect_strength
                     result_tensor = cls.apply_colored_light(result_tensor, final_mask_expanded, light['color'], effective_intensity)
                 else: # Color Correction
-                    print("  Applying color correction...")
-                    # Use INNER parameters when applying a single combined mask
-                    # This is a simplification for Behind/Front modes.
-                    # Only "No Occlusion" mode uses outer params separately via ring_mask_base.
+                    logger.debug("  Applying color correction...")
                     inner_brightness = params.get('inner_brightness',0)*effect_strength; inner_contrast=params.get('inner_contrast',0)*effect_strength
                     inner_saturation=params.get('inner_saturation',0)*effect_strength; inner_temperature=params.get('inner_temperature',0)*effect_strength
                     inner_tint=params.get('inner_tint',0)*effect_strength; inner_gamma=params.get('inner_gamma',1.0)
-                    print(f"    Using Inner Corr Params: B={inner_brightness:.1f} C={inner_contrast:.1f} S={inner_saturation:.1f} ...")
-                    corrected_image = cls.apply_color_correction(result_tensor, inner_brightness, inner_contrast, inner_saturation, inner_temperature, inner_tint, inner_gamma)
-                    result_tensor = result_tensor * (1.0 - final_mask_expanded) + corrected_image * final_mask_expanded
+                    logger.debug(f"    Inner Corr Params: B={inner_brightness:.1f} C={inner_contrast:.1f} S={inner_saturation:.1f} ...")
+                    corrected_inner = cls.apply_color_correction(result_tensor, inner_brightness, inner_contrast, inner_saturation, inner_temperature, inner_tint, inner_gamma)
+                    if inner_zone_mask is not None and ring_zone_mask is not None:
+                        # Standard mode: two-zone correction. inner_* params in the
+                        # inner area, outer_* params in the surrounding ring.
+                        outer_brightness = params.get('outer_brightness',0)*effect_strength; outer_contrast=params.get('outer_contrast',0)*effect_strength
+                        outer_saturation=params.get('outer_saturation',0)*effect_strength; outer_temperature=params.get('outer_temperature',0)*effect_strength
+                        outer_tint=params.get('outer_tint',0)*effect_strength; outer_gamma=params.get('outer_gamma',1.0)
+                        logger.debug(f"    Outer Corr Params: B={outer_brightness:.1f} C={outer_contrast:.1f} S={outer_saturation:.1f} ...")
+                        corrected_outer = cls.apply_color_correction(result_tensor, outer_brightness, outer_contrast, outer_saturation, outer_temperature, outer_tint, outer_gamma)
+                        inner_expanded = inner_zone_mask.unsqueeze(0).unsqueeze(-1).expand_as(result_tensor)
+                        ring_expanded = ring_zone_mask.unsqueeze(0).unsqueeze(-1).expand_as(result_tensor)
+                        result_tensor = result_tensor * (1.0 - final_mask_expanded) + corrected_inner * inner_expanded + corrected_outer * ring_expanded
+                    else:
+                        # Behind/Front modes: single combined mask with inner params
+                        # (documented simplification).
+                        result_tensor = result_tensor * (1.0 - final_mask_expanded) + corrected_inner * final_mask_expanded
             else:
-                 print("  Skipping light application (final mask is near-empty).")
+                 logger.debug("  Skipping light application (final mask is near-empty).")
 
 
         # --- Final Steps ---
@@ -637,24 +678,24 @@ class ReLight(io.ComfyNode):
         if remove_background and fg_mask is not None:
             # *** ADJUSTED COMPOSITING LOGIC ***
             if light_direction == "No Occlusion":
-                print("Compositing lit foreground onto original background ('No Occlusion' mode)...")
+                logger.debug("Compositing lit foreground onto original background ('No Occlusion' mode)...")
                 fg_mask_expanded = fg_mask.unsqueeze(-1).expand_as(image)
                 final_result = result_tensor * fg_mask_expanded + image * (1.0 - fg_mask_expanded)
-                print("  - Compositing complete.")
+                logger.debug("  - Compositing complete.")
             else: # "Behind Subject" or "In Front of Subject"
-                print(f"Skipping final compositing step for '{light_direction}' mode (lighting applied to FG/BG directly).")
+                logger.debug(f"Skipping final compositing step for '{light_direction}' mode (lighting applied to FG/BG directly).")
                 final_result = result_tensor # Keep the result which includes lit BG/FG interaction
             # *** END ADJUSTED COMPOSITING LOGIC ***
         else:
              # If remove_background is false, always keep the full result
-             print("Skipping final compositing (remove_background=False or no mask).")
+             logger.debug("Skipping final compositing (remove_background=False or no mask).")
              final_result = result_tensor
 
 
         # Debug Image Generation
         debug_image = torch.zeros_like(image[0:1]) # Default black placeholder
         if show_debug_info:
-            print("Attempting debug visualization...")
+            logger.debug("Attempting debug visualization...")
             if all_inner_base_masks_for_debug and all_outer_base_masks_for_debug:
                  fg_mask_for_debug = fg_mask if fg_mask is not None else None
                  debug_image = cls.create_debug_image(
@@ -664,25 +705,25 @@ class ReLight(io.ComfyNode):
                      light_sources,
                      fg_mask_for_debug
                  )
-                 print(f"  - Debug image generation attempted.") # Log attempt
-            else: print("  - Skipping debug image: No base masks were generated/collected.")
-        else: print("Debug visualization disabled.")
+                 logger.debug("  - Debug image generation attempted.") # Log attempt
+            else: logger.debug("  - Skipping debug image: No base masks were generated/collected.")
+        else: logger.debug("Debug visualization disabled.")
 
         elapsed_time = time.time() - start_time
-        print(f"--- ReLight processing finished in {elapsed_time:.3f} seconds ---")
+        logger.debug(f"--- ReLight processing finished in {elapsed_time:.3f} seconds ---")
 
         if original_input_mask is None: original_input_mask = torch.zeros((batch_size, height, width), device=device, dtype=torch.float32)
         if not isinstance(debug_image, torch.Tensor):
-             print("Warn: Debug image was not a tensor. Returning black placeholder.")
+             logger.warning("Warn: Debug image was not a tensor. Returning black placeholder.")
              debug_image = torch.zeros_like(image[0:1])
         # Ensure debug image has correct shape and batch size before returning
         # *** DEBUG SHAPE CHECK FIX ***
         elif debug_image.shape[1:] != image.shape[1:]: # Compare (H, W, C) vs (H, W, C)
-             print(f"Warn: Debug image shape mismatch {debug_image.shape[1:]} vs image {image.shape[1:]}. Returning black placeholder.")
+             logger.warning(f"Warn: Debug image shape mismatch {debug_image.shape[1:]} vs image {image.shape[1:]}. Returning black placeholder.")
              debug_image = torch.zeros_like(image[0:1])
         # *** END DEBUG SHAPE CHECK FIX ***
         elif debug_image.shape[0] != 1:
-             print(f"Warn: Debug image has batch size {debug_image.shape[0]}. Taking first item.")
+             logger.warning(f"Warn: Debug image has batch size {debug_image.shape[0]}. Taking first item.")
              debug_image = debug_image[0:1]
 
         return io.NodeOutput(final_result, original_input_mask, debug_image)

@@ -4,11 +4,11 @@
 ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 ![ComfyUI v3](https://img.shields.io/badge/ComfyUI-v3%20Compatible-green)
 
-> **Transform your images with cinematic lighting effects in a single click!**
+> **Relight your images without re-generating them.**
 
-ReLight is a powerful custom node for ComfyUI that adds professional-grade lighting capabilities to your images. Create dramatic shadows, natural window lighting, warm sunset glows, or striking rim effects with precise control over every aspect of your lighting setup.
+ReLight is a single, self-contained ComfyUI node that adds up to 3 positionable light sources to any image — colored additive light or precise color correction, with presets, directional gradients, rim lighting, and mask-aware 3D occlusion. It's fast and deterministic: pure image processing, no diffusion pass, no models to download.
 
-**Now fully compatible with ComfyUI v3 schema!**
+**Built on the ComfyUI v3 node schema.**
 ![ReLight Node Example](https://github.com/user-attachments/assets/34fa5b9f-65e6-4953-8bd4-65a349ed9455)
 
 ## 🌟 Features
@@ -61,33 +61,34 @@ ReLight is a powerful custom node for ComfyUI that adds professional-grade light
 cd path/to/ComfyUI/custom_nodes
 
 # Clone this repository
-git clone https://github.com/yourusername/comfyui_relight
+git clone https://github.com/EnragedAntelope/comfyui-relight
 
 # Install dependencies
-pip install -r comfyui_relight/requirements.txt
+pip install -r comfyui-relight/requirements.txt
 
 # Restart ComfyUI
 ```
 
 ### Dependencies
 
+ReLight needs `numpy`, `Pillow`, and `scipy` (installed automatically from `requirements.txt`; `torch` is provided by ComfyUI itself).
+
 ReLight works best with high-quality foreground masks. We recommend installing:
 
 - **[ComfyUI Essentials](https://github.com/cubiq/ComfyUI_essentials)** - Provides enhanced mask generation and background removal tools
-- **[Scipy](https://scipy.org/)** - Required for rim lighting effects (should be installed automatically)
 
 ## 🚀 Quick Start Guide
 
 1. **Add the ReLight 💡 node** to your workflow (found under category "image/lighting")
 2. **Connect your source image**
-3. **Connect a foreground mask** (white = subject, black = background)
+3. **Connect a foreground mask** (white = subject, black = background) — optional, but required for occlusion ("Behind Subject" / "In Front of Subject") and background compositing
 4. **Select a preset** like "Rim Light (Behind)" or design your own lighting
 5. **Adjust settings** to taste
 6. **Preview your results** in real-time
 
 ### Sample Workflow
 
-![Sample Workflow](https://github.com/EnragedAntelope/comfyui-relight/blob/main/example%20workflow.json)
+A ready-to-load workflow is included: [example workflow.json](https://github.com/EnragedAntelope/comfyui-relight/blob/main/example%20workflow.json)
 
 The repository includes a sample workflow file (`example workflow.json`) that demonstrates:
 
@@ -118,7 +119,7 @@ This example uses three colored lights to create a purposely over the top striki
 
 - **Light 2 (Green)**:
   - Position: left side (0.2, 0.3)
-  - RGB Color: (255, 0, 0)
+  - RGB Color: (0, 255, 0)
   - Medium intensity (0.7)
 
 - **Light 3 (Blue)**:
@@ -224,13 +225,14 @@ Simulate soft moonlight streaming through a window:
 | Node fails to load | Ensure scipy is installed |
 | Poor mask quality | Use RemBG from ComfyUI Essentials for better masks |
 | Preset not working as expected | Try toggling use_colored_lights or apply_3d_lighting |
+| Subject looks unlit / effect appears reversed | Your mask may be inverted — ReLight expects white=subject, black=background (invert it upstream with an InvertMask node) |
 | Debug image not showing correctly | Enable show_debug_info and check console logs |
 
 ## 📚 Detailed Parameters Reference
 
 ### Core Inputs
 - **image**: Input image to apply lighting effects
-- **mask**: Foreground mask (White=Subject, Black=Background)
+- **mask** (optional): Foreground mask (White=Subject, Black=Background). Required for occlusion modes and background compositing
 
 ### Global Behavior
 - **preset**: Pre-configured starting points
@@ -267,6 +269,15 @@ MIT License - Feel free to use in personal and commercial projects
 Contributions are welcome! Please feel free to submit a Pull Request.
 
 ### 🔄 Updates
+
+- **v2.1.0** - Correctness & polish
+  - **Fixed: outer-area color correction now actually applies.** The `outer_*` (brightness/contrast/saturation/temperature/tint/gamma) parameters were previously never used — standard-mode lighting now applies inner settings inside the inner radius and outer settings in the surrounding ring, as documented (this is what presets like "Soft Window Light" and "Spotlight" were designed around)
+  - Colored lights in standard mode now have true radial falloff (full strength inside the inner radius, fading to zero at the outer radius) — `inner_circle_radius` previously had no effect
+  - `mask` input is now optional (matching actual behavior); without a mask the node applies plain lighting and disables occlusion/compositing
+  - Removed silent mask auto-inversion heuristic that could corrupt masks of large subjects; a console warning is logged instead if a mask looks inverted
+  - Fixed v3 schema output ids (schema now passes ComfyUI validation)
+  - Console spam removed — verbose diagnostics moved to debug-level logging
+  - Packaging: removed `torch` from requirements (ComfyUI provides it)
 
 - **v2.0.0** - ComfyUI v3 Migration
   - Fully migrated to ComfyUI v3 schema

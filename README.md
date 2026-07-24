@@ -69,7 +69,9 @@ pip install -r comfyui-relight/requirements.txt
 # Restart ComfyUI
 ```
 
-### Dependencies
+### Requirements
+
+**ComfyUI 0.3.48 or newer.** ReLight is built on the ComfyUI v3 node schema (`comfy_api`), which first shipped in that release. On older builds the node will not load.
 
 ReLight needs `numpy`, `Pillow`, and `scipy` (installed automatically from `requirements.txt`; `torch` is provided by ComfyUI itself).
 
@@ -81,16 +83,18 @@ ReLight works best with high-quality foreground masks. We recommend installing:
 
 1. **Add the ReLight 💡 node** to your workflow (found under category "image/lighting")
 2. **Connect your source image**
-3. **Connect a foreground mask** (white = subject, black = background) — optional, but required for occlusion ("Behind Subject" / "In Front of Subject") and background compositing
+3. **Connect a foreground mask** (white = subject, black = background) — optional, but required for occlusion ("Behind Subject" / "In Front of Subject") and for `remove_background` compositing. It is resized automatically if it does not match the image
 4. **Select a preset** like "Rim Light (Behind)" or design your own lighting
 5. **Adjust settings** to taste
 6. **Preview your results** in real-time
 
+> **Note on presets:** a preset overrides the widgets below it. The values shown on the node are ignored for whatever the preset defines, so don't be surprised when editing `inner_brightness` does nothing while a preset is active. Set `preset` back to `None` to tune by hand, or turn on `preserve_positioning` to keep your own light positions and radii while the preset supplies everything else.
+
 ### Sample Workflow
 
-A ready-to-load workflow is included: [example workflow.json](https://github.com/EnragedAntelope/comfyui-relight/blob/main/example%20workflow.json)
+A ready-to-load workflow is included: [example_workflows/relight_basic.json](https://github.com/EnragedAntelope/comfyui-relight/blob/main/example_workflows/relight_basic.json)
 
-The repository includes a sample workflow file (`example workflow.json`) that demonstrates:
+The repository includes a sample workflow that demonstrates:
 
 1. Loading an image
 2. Removing the background using ComfyUI Essentials' RemBG nodes
@@ -193,16 +197,20 @@ Simulate soft moonlight streaming through a window:
 
 | Parameter | Description |
 |-----------|-------------|
-| **image** | Input image to apply lighting effects |
-| **mask** | Foreground mask (white=subject, black=background) |
-| **preset** | Select from pre-configured lighting setups |
-| **num_light_sources** | How many lights to use (1-3) |
+| **image** | Input image to apply lighting effects. RGB or RGBA; alpha passes through untouched |
+| **mask** | Foreground mask (white=subject, black=background). Resized to the image automatically |
+| **preset** | Select from pre-configured lighting setups. Overrides the widgets it defines |
+| **num_light_sources** | How many lights to use (1-3). Lights 2 and 3 have their own position, radius and color, but in color-correction mode they reuse Light 1's correction settings |
 | **use_colored_lights** | Toggle between additive color and correction modes |
-| **apply_3d_lighting** | Enable simulated subject occlusion effects |
-| **light_direction** | How light interacts with subject ("No Occlusion", "In Front", "Behind") |
-| **effect_strength** | Master intensity control for all lighting effects |
+| **light_direction** | How light interacts with subject ("No Occlusion", "In Front", "Behind"). This is the control to use; `apply_3d_lighting` is just a master off-switch |
+| **remove_background** | Composite the lit result back over the untouched original using the mask, so only the subject is relit. Despite the name it removes nothing. Off by default |
+| **effect_strength** | Master intensity control for all lighting effects. `0.0` leaves the image untouched |
 | **mask_blur** | Controls softness of light edges and transitions |
 | **rim_amplification** | Specifically enhances rim light intensity |
+
+### A note on gamma
+
+`inner_gamma` and `outer_gamma` follow the convention used by Photoshop's Levels midtone slider, ImageMagick's `-gamma` and ffmpeg's `eq` filter: **values above 1.0 brighten midtones, values below 1.0 darken them.**
 
 ### Light Positioning
 
@@ -220,9 +228,12 @@ Simulate soft moonlight streaming through a window:
 |---------|----------|
 | No visible effect | Increase effect_strength or light_intensity |
 | Light too strong | Decrease effect_strength or specific intensity/brightness values |
-| Occlusion not working | Ensure apply_3d_lighting is True and mask is connected |
+| Occlusion not working | Set light_direction to "Behind Subject" or "In Front of Subject" and connect a mask |
+| Only the subject changes, background untouched | `remove_background` is on — turn it off to light the whole frame |
+| Editing a slider does nothing | A preset is active and overrides it. Set preset to "None" |
+| Preset ignores its own light position/radius | `preserve_positioning` is on — turn it off to let the preset place its light |
 | Black debug image | Check ComfyUI console for errors |
-| Node fails to load | Ensure scipy is installed |
+| Node fails to load | Ensure scipy is installed and ComfyUI is 0.3.48 or newer |
 | Poor mask quality | Use RemBG from ComfyUI Essentials for better masks |
 | Preset not working as expected | Try toggling use_colored_lights or apply_3d_lighting |
 | Subject looks unlit / effect appears reversed | Your mask may be inverted — ReLight expects white=subject, black=background (invert it upstream with an InvertMask node) |
@@ -235,28 +246,30 @@ Simulate soft moonlight streaming through a window:
 - **mask** (optional): Foreground mask (White=Subject, Black=Background). Required for occlusion modes and background compositing
 
 ### Global Behavior
-- **preset**: Pre-configured starting points
+- **preset**: Pre-configured starting points. Overrides the widgets it defines
 - **num_light_sources**: Use 1, 2, or 3 lights
-- **preserve_positioning**: Keep manual light positions when changing presets
-- **show_debug_info**: Output visualization showing base masks and light positions
+- **preserve_positioning**: Keep your own light positions and radii when a preset is selected, instead of letting the preset set them. Off by default so presets apply as designed
+- **show_debug_info**: Output visualization showing base masks and light positions (first image of the batch)
 
 ### Lighting Mode & Occlusion
 - **use_colored_lights**: Use additive colored light instead of color correction
 - **use_gradient_mode**: Use directional gradient masks instead of radial
-- **apply_3d_lighting**: Simulate light occlusion by subject (requires mask)
-- **light_direction**: How light interacts with subject
-- **remove_background**: Composite result using mask
+- **apply_3d_lighting**: Master switch for occlusion. Leave it on and drive the behaviour with `light_direction`
+- **light_direction**: How light interacts with subject. "Behind"/"In Front" require a mask
+- **remove_background**: Composite the lit result back over the untouched original using the mask. Ignored for "Behind Subject" and "In Front of Subject", which already light foreground and background separately
 
 ### Global Modifiers
-- **effect_strength**: Overall intensity multiplier for lighting
+- **effect_strength**: Overall intensity multiplier for lighting, gamma included. `0.0` is a true no-op
 - **mask_blur**: Blur radius for light mask edges
 - **rim_amplification**: Boost specifically for rim light component
 
 ### Light Specific Settings (per light)
 - **Position**: light_position_x/_y coordinates
 - **Shape**: inner_circle_radius/outer_circle_radius
-- **Color** (when using colored lights): light_color_r/_g/_b, light_intensity
-- **Corrections** (when using color correction): Brightness, Contrast, Saturation, Temperature, Tint, Gamma
+- **Color** (when using colored lights): light_color_r/_g/_b, light_intensity — available for all three lights
+- **Corrections** (when using color correction): Brightness, Contrast, Saturation, Temperature, Tint, Gamma. These belong to Light 1; lights 2 and 3 reuse them at their own positions
+
+In color-correction mode the `inner_*` settings apply inside `inner_circle_radius` and the `outer_*` settings apply in the ring out to `outer_circle_radius`. Outside that ring the image is untouched.
 
 ## 📜 License
 
@@ -268,7 +281,32 @@ MIT License - Feel free to use in personal and commercial projects
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+The node can be tested without a ComfyUI install — `tests/stubs` provides a stand-in for `comfy_api`:
+
+```bash
+pip install -r requirements.txt
+pip install torch pytest ruff
+pytest -q
+ruff check .
+```
+
 ### 🔄 Updates
+
+- **v3.0.0** - Correctness overhaul (some outputs change; see below)
+  - **Fixed: crash when the mask resolution did not match the image.** Masks are now resized (and clamped to 0-1) automatically, so a mask made before an upscale no longer takes the node down
+  - **Fixed: crash on RGBA input.** 4-channel images are handled, with the alpha channel passed through untouched
+  - **Fixed: batched runs applied the first image's mask to every frame.** Occlusion and compositing are now computed per frame, which matters for any video or multi-image workflow
+  - **Fixed: the `mask` output returned black** when both `apply_3d_lighting` and `remove_background` were off, and echoed the input's shape instead of a normalised `(batch, height, width)` mask
+  - **Colour correction no longer round-trips through 8-bit.** Every correction previously quantised the image, so even all-neutral settings shifted pixels by 1/255 and the error compounded across light sources and chained ReLight nodes. Corrections now run in float32 on-device, and identity settings are a true no-op
+  - Mask blurring likewise moved off the 8-bit path to a float convolution, removing banding in smooth falloffs
+  - **`effect_strength` now scales gamma too**, so `0.0` genuinely leaves the image untouched (gamma was previously exempt)
+  - **Changed default: `remove_background` is now off.** With it on, connecting a mask silently confined all lighting to the subject and left the background untouched — surprising, and not what the quick start described. Turn it on to get the old behaviour
+  - **Changed default: `preserve_positioning` is now off**, so presets apply their own light positions and radii. Presets like "Spotlight" are defined by their tight radii and previously never applied them. Turn it on to keep your own positioning while a preset supplies everything else
+  - **Preset gamma values corrected.** Gamma follows the Photoshop/ImageMagick/ffmpeg convention where values above 1.0 brighten — but presets paired dimmed outer zones with gamma above 1.0, partially undoing their own shading. The presets now darken and brighten as designed
+  - Node inputs are grouped: secondary controls (`outer_*`, lights 2 and 3, debug) are marked advanced where ComfyUI supports it, cutting the visible surface from 48 widgets. Input order is unchanged, so saved workflows still load
+  - Declares `requires-comfyui = ">=0.3.48"`, and a missing `comfy_api` now raises a readable message instead of a bare traceback
+  - Example workflow moved to `example_workflows/relight_basic.json` (the conventional location)
+  - Added a test suite and CI covering all of the above
 
 - **v2.1.0** - Correctness & polish
   - **Fixed: outer-area color correction now actually applies.** The `outer_*` (brightness/contrast/saturation/temperature/tint/gamma) parameters were previously never used — standard-mode lighting now applies inner settings inside the inner radius and outer settings in the surrounding ring, as documented (this is what presets like "Soft Window Light" and "Spotlight" were designed around)

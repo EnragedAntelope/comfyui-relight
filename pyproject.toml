@@ -21,8 +21,12 @@ requires-comfyui = ">=0.3.48"
 testpaths = ["tests"]
 
 [tool.ruff]
-line-length = 140
 exclude = ["tests/stubs"]
 
 [tool.ruff.lint]
-ignore = ["E741"]
+# Selected explicitly: ruff changes its *default* rule set between releases, so
+# relying on the default makes CI fail on style nits the moment a new ruff ships.
+select = ["E", "F", "W", "I"]
+# E501: the schema declarations and preset tables are deliberately one-per-line
+# and wide, which reads better than wrapping them.
+ignore = ["E741", "E501"]

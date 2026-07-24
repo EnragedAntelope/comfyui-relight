@@ -11,20 +11,20 @@ import torch
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-IDENTITY = dict(
-    inner_brightness=0.0,
-    inner_contrast=0.0,
-    inner_saturation=0.0,
-    inner_temperature=0.0,
-    inner_tint=0.0,
-    inner_gamma=1.0,
-    outer_brightness=0.0,
-    outer_contrast=0.0,
-    outer_saturation=0.0,
-    outer_temperature=0.0,
-    outer_tint=0.0,
-    outer_gamma=1.0,
-)
+IDENTITY = {
+    "inner_brightness": 0.0,
+    "inner_contrast": 0.0,
+    "inner_saturation": 0.0,
+    "inner_temperature": 0.0,
+    "inner_tint": 0.0,
+    "inner_gamma": 1.0,
+    "outer_brightness": 0.0,
+    "outer_contrast": 0.0,
+    "outer_saturation": 0.0,
+    "outer_temperature": 0.0,
+    "outer_tint": 0.0,
+    "outer_gamma": 1.0,
+}
 
 
 # --- schema ---------------------------------------------------------------

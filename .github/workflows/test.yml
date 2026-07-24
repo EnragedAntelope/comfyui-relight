@@ -7,6 +7,19 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Kept separate from the tests: a style nit should never hide a test result.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Pinned. The rule set is also pinned in pyproject.toml, because ruff
+      # changes its default selection between releases.
+      - run: pip install "ruff==0.16.0"
+      - run: ruff check .
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -28,10 +41,7 @@ jobs:
           # ComfyUI supplies torch at runtime; the CPU wheel is enough to test with.
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
-          pip install pytest ruff
-
-      - name: Lint
-        run: ruff check .
+          pip install pytest
 
       - name: Test
         run: pytest -q

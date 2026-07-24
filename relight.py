@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image, ImageDraw, ImageFont
+
 # SciPy is required for rim lighting, occlusion smoothing and mask blur
 from scipy import ndimage
 
@@ -504,8 +505,8 @@ class ReLight(io.ComfyNode):
                         inner_overlay_np[..., 0] = 255  # R
                         inner_overlay_np[..., 3] = inner_alpha
                         inner_overlay_img = Image.fromarray(inner_overlay_np, 'RGBA')
-            except Exception as e:
-                logger.exception(f"  ERROR creating inner mask overlay: {e}")
+            except Exception:
+                logger.exception("  ERROR creating inner mask overlay")
 
             # Ring Mask Overlay (Blue)
             try:
@@ -517,8 +518,8 @@ class ReLight(io.ComfyNode):
                         ring_overlay_np[..., 2] = 255  # B
                         ring_overlay_np[..., 3] = ring_alpha
                         ring_overlay_img = Image.fromarray(ring_overlay_np, 'RGBA')
-            except Exception as e:
-                logger.exception(f"  ERROR creating ring mask overlay: {e}")
+            except Exception:
+                logger.exception("  ERROR creating ring mask overlay")
 
             # Foreground Mask Overlay (Green)
             try:
@@ -529,8 +530,8 @@ class ReLight(io.ComfyNode):
                         fg_overlay_np[..., 1] = 255
                         fg_overlay_np[..., 3] = fg_alpha
                         fg_overlay_img = Image.fromarray(fg_overlay_np, 'RGBA')
-            except Exception as e:
-                logger.exception(f"  ERROR creating FG mask overlay: {e}")
+            except Exception:
+                logger.exception("  ERROR creating FG mask overlay")
 
             # --- Composite Overlays ---
             debug_img = pil_img
@@ -539,8 +540,8 @@ class ReLight(io.ComfyNode):
                 debug_img = Image.alpha_composite(debug_img, fg_overlay_img)
                 debug_img = Image.alpha_composite(debug_img, inner_overlay_img)
                 debug_img = Image.alpha_composite(debug_img, ring_overlay_img)
-            except Exception as e:
-                logger.exception(f"  ERROR compositing overlays: {e}")
+            except Exception:
+                logger.exception("  ERROR compositing overlays")
 
             # --- Draw Indicators & Legend ---
             draw_debug = ImageDraw.Draw(debug_img)
@@ -571,8 +572,8 @@ class ReLight(io.ComfyNode):
                         draw_debug.text(text_pos, label, fill=(255, 255, 255, 230), font=font)
                     else:
                         draw_debug.text(text_pos, label, fill=(255, 255, 255, 230))
-                except Exception as draw_err:
-                    logger.exception(f"    ERROR drawing indicator for light {i+1}: {draw_err}")
+                except Exception:
+                    logger.exception(f"    ERROR drawing indicator for light {i+1}")
             try:
                 legend_items = [("Inner Mask Area", (255, 0, 0, 128)), ("Outer Mask Area (Ring)", (0, 0, 255, 128))]
                 if fg_mask_tensor is not None:
@@ -592,15 +593,15 @@ class ReLight(io.ComfyNode):
                     draw_debug.rectangle((legend_x, legend_y, legend_x + 12, legend_y + 12), fill=color)
                     draw_debug.text((legend_x + 18, legend_y + 1), text, fill=(255, 255, 255, 220), font=font)
                     legend_y += line_height
-            except Exception as legend_err:
-                logger.exception(f"  ERROR drawing legend: {legend_err}")
+            except Exception:
+                logger.exception("  ERROR drawing legend")
 
             debug_np = np.array(debug_img.convert('RGB')).astype(np.float32) / 255.0
             logger.debug("--- Debug Image Creation Finished ---")
             return torch.from_numpy(debug_np).unsqueeze(0).to(original_image.device)
 
-        except Exception as e:
-            logger.exception(f"--- FATAL ERROR in create_debug_image: {e} ---")
+        except Exception:
+            logger.exception("--- FATAL ERROR in create_debug_image ---")
             return torch.zeros_like(original_image[0:1])
 
     # --- Mask preparation ---

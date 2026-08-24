@@ -35,6 +35,14 @@ _LUMA_WEIGHTS = (0.299, 0.587, 0.114)
 GAMMA_MIN = 0.1
 GAMMA_MAX = 5.0
 
+# Single-entry pixel-coordinate cache; every light in a run shares one grid.
+#
+# Module level, deliberately: ComfyUI's v3 runtime does not call execute() on
+# this class. It calls it on a *locked clone* whose metaclass raises
+# AttributeError on any class-attribute write, so `cls._coord_cache = ...` blew
+# up on the first mask of every run. Never store per-run state on the class.
+_COORD_CACHE = {}
+
 
 def _supports_advanced():
     """Whether this ComfyUI build accepts `advanced=` on widget inputs.
@@ -136,9 +144,6 @@ class ReLight(io.ComfyNode):
         "light2_position_x", "light2_position_y", "light2_inner_radius", "light2_outer_radius",
         "light3_position_x", "light3_position_y", "light3_inner_radius", "light3_outer_radius",
     })
-
-    # Single-entry pixel-coordinate cache; every light in a run shares one grid.
-    _coord_cache = {}
 
     @classmethod
     def define_schema(cls) -> io.Schema:
@@ -267,12 +272,14 @@ class ReLight(io.ComfyNode):
         process, and each mask cost three full-size temporaries instead of one.
         """
         key = (height, width)
-        cached = cls._coord_cache.get(key)
+        cached = _COORD_CACHE.get(key)
         if cached is None:
             cached = np.ogrid[0:height, 0:width]
             # Single-entry cache: a workflow rarely alternates resolutions, and this
-            # keeps grids from accumulating.
-            cls._coord_cache = {key: cached}
+            # keeps grids from accumulating. Mutated in place - rebinding the name
+            # would need a `global` and buys nothing.
+            _COORD_CACHE.clear()
+            _COORD_CACHE[key] = cached
         return cached
 
     @classmethod

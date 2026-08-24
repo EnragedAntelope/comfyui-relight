@@ -292,6 +292,10 @@ ruff check .
 
 ### 🔄 Updates
 
+- **v3.1.1** - Fixes a crash that broke every run on v3.0.0 and v3.1.0
+  - **Fixed: `AttributeError: Cannot modify class attribute '_coord_cache' on locked class 'ReLightClone'`.** ComfyUI runs a v3 node on a *locked clone* of its class, which forbids writing class attributes. The coordinate cache added in v3.0.0 wrote to the class on the first mask it built, so the node crashed on every execution regardless of settings. The cache now lives at module level; behaviour and output are unchanged
+  - The test suite now executes the node through a locked clone built exactly the way ComfyUI builds it, so class-attribute writes fail in CI instead of in a user's workflow
+
 - **v3.1.0** - Audit follow-ups (one preset shifts by under one 8-bit step; see below)
   - **Fixed: `effect_strength` was dead under three presets.** "Spotlight", "Rim Light (Behind)" and "Negative Light (Darken)" set it themselves, so the master intensity — including the documented `0.0` no-op — did nothing for exactly the strongest presets. A preset now sets a *baseline* that the widget scales: `1.0` is the preset as designed, `0.0` is a true no-op, `2.0` is double
   - **Fixed: high `effect_strength` crushed dimmed zones to solid black.** Gamma was faded toward identity by linear interpolation, which ran a dimming gamma (say `0.77`) through zero and negative above strength ~4; the safety clamp then turned that into an exponent of 100. Gamma now scales in exponent space and is bounded by the widget's own `0.1`–`5.0` range, so the zone dims smoothly all the way to strength `5.0`

@@ -411,6 +411,26 @@ def test_preset_shadow_zones_actually_darken(node):
 # --- presets and lights ---------------------------------------------------
 
 
+def test_reported_warm_sunset_glow_run(run, image):
+    """The exact configuration from the 3.1.0 crash report.
+
+    One image, no mask, the Warm Sunset Glow preset, both image outputs
+    consumed. Every output must come back as a usable tensor.
+    """
+    out_image, out_mask, debug = run(image, preset="Warm Sunset Glow")
+    assert out_image.shape == image.shape
+    assert out_mask.shape == (1, 64, 96)
+    assert debug.shape == (1, 64, 96, 3)
+    assert torch.isfinite(out_image).all()
+
+
+def test_reported_warm_sunset_glow_run_in_gradient_mode(run, image):
+    """Same report, gradient masks - the path the traceback died on."""
+    out_image = run(image, preset="Warm Sunset Glow", use_gradient_mode=True)[0]
+    assert out_image.shape == image.shape
+    assert torch.isfinite(out_image).all()
+
+
 def test_all_presets_execute_cleanly(node, run, image):
     mask = torch.zeros(1, 64, 96)
     mask[:, 16:48, 24:72] = 1.0
@@ -610,11 +630,40 @@ def test_geometry_keys_are_real_inputs(node):
 
 def test_pixel_grid_is_cheap_to_cache(node):
     """The grids are broadcast shaped; caching full (H, W) arrays pinned megabytes."""
-    node._coord_cache = {}
+    import relight
+
+    relight._COORD_CACHE.clear()
     rows, cols = node._pixel_grid(2048, 2048)
     assert rows.shape == (2048, 1)
     assert cols.shape == (1, 2048)
-    node._coord_cache = {}
+    relight._COORD_CACHE.clear()
+
+
+def test_pixel_grid_cache_holds_one_entry(node):
+    """A workflow that alternates resolutions must not accumulate grids."""
+    import relight
+
+    relight._COORD_CACHE.clear()
+    node._pixel_grid(64, 32)
+    node._pixel_grid(96, 48)
+    assert list(relight._COORD_CACHE) == [(48, 96)]
+    relight._COORD_CACHE.clear()
+
+
+def test_pixel_grid_does_not_write_to_the_locked_class(node):
+    """Regression: the cache used to live on the class.
+
+    ComfyUI runs `execute` on a locked clone, so `cls._coord_cache = ...` raised
+    "Cannot modify class attribute '_coord_cache' on locked class
+    'ReLightClone'" on the first mask of every run. Nothing per-run may be
+    stored on `cls`.
+    """
+    import relight
+
+    relight._COORD_CACHE.clear()
+    node._pixel_grid(32, 16)  # would raise AttributeError if it wrote to cls
+    assert "_coord_cache" not in vars(node)
+    relight._COORD_CACHE.clear()
 
 
 def test_masks_match_a_full_grid_reference(node):

@@ -6,9 +6,9 @@ A single, self-contained ComfyUI node that adds up to 3 positionable light sourc
 
 _Last verified: 2026-08-24_
 
-- **Status:** released v3.1.0 (`pyproject.toml`). Published to the Comfy Registry via `.github/workflows/publish_action.yml`, which fires on a `pyproject.toml` version change on `main` — a functional change needs a version bump or it never ships.
+- **Status:** released v3.1.1 (`pyproject.toml`). Published to the Comfy Registry via `.github/workflows/publish_action.yml`, which fires on a `pyproject.toml` version change on `main` — a functional change needs a version bump or it never ships.
 - **Works:** up to three independent light sources; both per-source modes (colored additive light, and color correction with brightness/contrast/saturation/temperature/tint/gamma); circular-falloff and gradient mask shapes; mask-aware front / rim / standard subject interaction; the built-in preset set; the visual debug view. `.github/workflows/test.yml` runs pytest across Python 3.10–3.12 plus a separate, deliberately non-blocking ruff job.
-- **In progress:** nothing — v3.0.0 closed out the crash, batch-mask and 8-bit precision-loss bugs and added the test suite; v3.1.0 closed out a second audit pass. See the changelog in `README.md` for what each release changed.
+- **In progress:** nothing — v3.0.0 closed out the crash, batch-mask and 8-bit precision-loss bugs and added the test suite; v3.1.0 closed out a second audit pass; v3.1.1 fixed the locked-class crash that made both of those releases unrunnable in ComfyUI. See the changelog in `README.md` for what each release changed.
 - **Known gaps / next steps:** output quality depends heavily on the input mask, and the only mask-quality guard is a console-only warning when a mask is >90% white; presets are plain dicts at the top of `relight.py` with no way for a user to add their own without editing the file; there is no example beyond the bundled workflow JSON; the occlusion paths deliberately still do per-frame CPU SciPy work (`fg_mask[b].cpu().numpy()` + Sobel per frame) because vectorising risks numeric drift.
 - **Deep docs:** none — `README.md` is the user-facing reference and `relight.py` is the whole implementation.
 
@@ -66,6 +66,8 @@ ruff check .
 - Widget inputs are stored *positionally* in saved workflows. Appending is safe; inserting, removing or reordering silently corrupts every workflow in the wild. `test_saved_workflow_widget_order_is_stable` pins the order.
 - A preset overrides whatever widgets it names — except `effect_strength`, which it scales (see `ReLight.STRENGTH_KEY`), and the `GEOMETRY_KEYS` when `preserve_positioning` is on.
 - Presets are defined as dicts at the top of `relight.py` — easy to extend.
+- **Never store per-run state on the class.** ComfyUI does not call `execute` on `ReLight`; it calls it on a *locked clone* (`ReLightClone`) whose metaclass raises `AttributeError` on any class-attribute write, and whose instances reject `__setattr__` too. `cls._coord_cache = ...` shipped in v3.0.0 and crashed every single run until v3.1.1. Caches belong at module level (`_COORD_CACHE`).
+- The `node` fixture in `tests/conftest.py` hands tests that same locked clone, mirroring `comfy_api.internal.lock_class`, so this class of bug fails in CI. Do not "simplify" it back to the bare class — the bare class is not what ComfyUI runs.
 
 ## Security
 

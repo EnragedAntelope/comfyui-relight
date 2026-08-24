@@ -38,9 +38,9 @@ ReLight is a single, self-contained ComfyUI node that adds up to 3 positionable 
   - "Warm Sunset Glow" - Golden hour atmosphere
   - "Cool Blue Moonlight" - Mysterious night-time look
   - "Studio Key Light" - Professional portrait lighting
-  - "Rim Light" - Striking edge highlights
+  - "Rim Light (Behind)" - Striking edge highlights
   - "Spotlight" - Focused dramatic lighting
-  - "Negative Light" - Creative darkening effects
+  - "Negative Light (Darken)" - Creative darkening effects
 
 - **Visual Debugging** - See exactly where your lights are positioned and how they interact
 - **Fine-Tuning Controls** - Perfect your lighting with precision adjustments for blur, strength, and rim amplification
@@ -88,7 +88,7 @@ ReLight works best with high-quality foreground masks. We recommend installing:
 5. **Adjust settings** to taste
 6. **Preview your results** in real-time
 
-> **Note on presets:** a preset overrides the widgets below it. The values shown on the node are ignored for whatever the preset defines, so don't be surprised when editing `inner_brightness` does nothing while a preset is active. Set `preset` back to `None` to tune by hand, or turn on `preserve_positioning` to keep your own light positions and radii while the preset supplies everything else.
+> **Note on presets:** a preset overrides the widgets below it. The values shown on the node are ignored for whatever the preset defines, so don't be surprised when editing `inner_brightness` does nothing while a preset is active. Set `preset` back to `None` to tune by hand, or turn on `preserve_positioning` to keep your own light positions and radii while the preset supplies everything else. The one exception is `effect_strength`: it *scales* the preset rather than being replaced by it, so `1.0` is the preset as designed, `0.5` is half-strength and `0.0` is untouched.
 
 ### Sample Workflow
 
@@ -204,7 +204,7 @@ Simulate soft moonlight streaming through a window:
 | **use_colored_lights** | Toggle between additive color and correction modes |
 | **light_direction** | How light interacts with subject ("No Occlusion", "In Front", "Behind"). This is the control to use; `apply_3d_lighting` is just a master off-switch |
 | **remove_background** | Composite the lit result back over the untouched original using the mask, so only the subject is relit. Despite the name it removes nothing. Off by default |
-| **effect_strength** | Master intensity control for all lighting effects. `0.0` leaves the image untouched |
+| **effect_strength** | Master intensity control for all lighting effects, gamma included. `0.0` leaves the image untouched. Scales a preset rather than being overridden by it. Does not scale `rim_amplification` or `mask_blur`, which have their own controls |
 | **mask_blur** | Controls softness of light edges and transitions |
 | **rim_amplification** | Specifically enhances rim light intensity |
 
@@ -230,7 +230,7 @@ Simulate soft moonlight streaming through a window:
 | Light too strong | Decrease effect_strength or specific intensity/brightness values |
 | Occlusion not working | Set light_direction to "Behind Subject" or "In Front of Subject" and connect a mask |
 | Only the subject changes, background untouched | `remove_background` is on — turn it off to light the whole frame |
-| Editing a slider does nothing | A preset is active and overrides it. Set preset to "None" |
+| Editing a slider does nothing | A preset is active and overrides it. Set preset to "None" (`effect_strength` still works — it scales the preset) |
 | Preset ignores its own light position/radius | `preserve_positioning` is on — turn it off to let the preset place its light |
 | Black debug image | Check ComfyUI console for errors |
 | Node fails to load | Ensure scipy is installed and ComfyUI is 0.3.48 or newer |
@@ -259,7 +259,7 @@ Simulate soft moonlight streaming through a window:
 - **remove_background**: Composite the lit result back over the untouched original using the mask. Ignored for "Behind Subject" and "In Front of Subject", which already light foreground and background separately
 
 ### Global Modifiers
-- **effect_strength**: Overall intensity multiplier for lighting, gamma included. `0.0` is a true no-op
+- **effect_strength**: Overall intensity multiplier for lighting, gamma included. `0.0` is a true no-op, with or without a preset. Presets set a baseline that this widget scales, so `1.0` gives the preset as designed. It does not scale `rim_amplification` or `mask_blur` — each has its own control
 - **mask_blur**: Blur radius for light mask edges
 - **rim_amplification**: Boost specifically for rim light component
 
@@ -269,7 +269,7 @@ Simulate soft moonlight streaming through a window:
 - **Color** (when using colored lights): light_color_r/_g/_b, light_intensity — available for all three lights
 - **Corrections** (when using color correction): Brightness, Contrast, Saturation, Temperature, Tint, Gamma. These belong to Light 1; lights 2 and 3 reuse them at their own positions
 
-In color-correction mode the `inner_*` settings apply inside `inner_circle_radius` and the `outer_*` settings apply in the ring out to `outer_circle_radius`. Outside that ring the image is untouched.
+In color-correction mode with `light_direction` on "No Occlusion", the `inner_*` settings apply inside `inner_circle_radius` and the `outer_*` settings apply in the ring out to `outer_circle_radius`. Outside that ring the image is untouched. The two occlusion modes ("Behind Subject" and "In Front of Subject") build a single subject-aware light mask instead, and apply the `inner_*` settings through it — the `outer_*` settings are not used there.
 
 ## 📜 License
 
@@ -291,6 +291,17 @@ ruff check .
 ```
 
 ### 🔄 Updates
+
+- **v3.1.0** - Audit follow-ups (one preset shifts by under one 8-bit step; see below)
+  - **Fixed: `effect_strength` was dead under three presets.** "Spotlight", "Rim Light (Behind)" and "Negative Light (Darken)" set it themselves, so the master intensity — including the documented `0.0` no-op — did nothing for exactly the strongest presets. A preset now sets a *baseline* that the widget scales: `1.0` is the preset as designed, `0.0` is a true no-op, `2.0` is double
+  - **Fixed: high `effect_strength` crushed dimmed zones to solid black.** Gamma was faded toward identity by linear interpolation, which ran a dimming gamma (say `0.77`) through zero and negative above strength ~4; the safety clamp then turned that into an exponent of 100. Gamma now scales in exponent space and is bounded by the widget's own `0.1`–`5.0` range, so the zone dims smoothly all the way to strength `5.0`
+  - **Fixed: single-channel images silently became 3-channel** in colored-light mode, and produced a black debug view. Colored light now adds the light's luminance to a 1-channel image, and the debug visualization renders grayscale input properly. The debug output is now always RGB, whatever the input
+  - Coordinate grids are cached as broadcast rows/columns instead of two full-size arrays — bit-identical masks, but a 4096×4096 workflow no longer pins ~268 MB for the life of the process, and each mask allocates one full-size temporary instead of three
+  - Rim-mask gradient magnitude is computed once per frame instead of twice; gamma widget bounds and the internal clamp now share one constant. Output unchanged either way
+  - Clarified that the two-zone `inner_*`/`outer_*` split applies to "No Occlusion" only; the occlusion modes use `inner_*` through a single subject-aware mask, and that `effect_strength` does not scale `rim_amplification` or `mask_blur`
+  - Packaging: declares `requires-python >= 3.10`; dependency floors synced between `pyproject.toml` and `requirements.txt`; the publish workflow now requests only `contents: read`
+  - Tests cover every fix above, plus schema self-consistency: widget defaults within their declared ranges, combo defaults among the offered options, preset values reachable by hand
+  - **Output drift:** at default settings, existing workflows are unaffected. Across every preset × occlusion-mode combination only "Spotlight" changes at all, by at most 0.7/255 on a single pixel — below one 8-bit step. It is the only preset that pairs a non-`1.0` `effect_strength` with a dimming gamma
 
 - **v3.0.0** - Correctness overhaul (some outputs change; see below)
   - **Fixed: crash when the mask resolution did not match the image.** Masks are now resized (and clamped to 0-1) automatically, so a mask made before an upscale no longer takes the node down

@@ -1,9 +1,11 @@
 [project]
 name = "ReLight"
 description = "Relight images without re-generating them: up to 3 positionable light sources, colored or corrective light, presets, rim lighting, and mask-aware 3D occlusion - fast, deterministic, no models to download."
-version = "3.0.0"
+version = "3.1.0"
+requires-python = ">=3.10"
 license = {file = "LICENSE"}
-dependencies = ["numpy", "Pillow", "scipy"]
+# Floors mirror requirements.txt; keep the two in sync.
+dependencies = ["numpy>=1.19.0", "Pillow>=9.0.0", "scipy>=1.7.0"]
 
 [project.urls]
 Repository = "https://github.com/EnragedAntelope/comfyui-relight"

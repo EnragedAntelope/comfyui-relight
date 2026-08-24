@@ -490,3 +490,180 @@ def test_wide_and_tall_images(run):
         img = torch.rand(*shape)
         out_image = run(img, use_colored_lights=True)[0]
         assert out_image.shape == img.shape
+
+
+# --- finding 18: effect_strength must survive a preset ----------------------
+
+
+def test_every_preset_is_a_no_op_at_zero_effect_strength(node, run):
+    """`effect_strength=0.0` is documented as a true no-op - presets included.
+
+    Three presets define `effect_strength` themselves; overriding the widget
+    outright left the master intensity dead for exactly the strongest presets.
+    """
+    flat = torch.full((1, 24, 32, 3), 0.5)
+    for name in node.PRESETS:
+        out_image = run(flat, preset=name, effect_strength=0.0)[0]
+        assert torch.allclose(out_image, flat, atol=1e-6), f"{name}: not a no-op at strength 0"
+
+
+def test_preset_effect_strength_is_scaled_not_replaced(run):
+    """A preset that sets effect_strength still responds to the widget."""
+    flat = torch.full((1, 24, 32, 3), 0.5)
+    weak = run(flat, preset="Spotlight", effect_strength=0.5)[0]
+    normal = run(flat, preset="Spotlight", effect_strength=1.0)[0]
+    strong = run(flat, preset="Spotlight", effect_strength=2.0)[0]
+    delta = [(x - flat).abs().mean().item() for x in (weak, normal, strong)]
+    assert delta[0] < delta[1] < delta[2], delta
+
+
+def test_preset_defaults_are_unchanged_by_the_scaling(node, run):
+    """At the widget default of 1.0 a preset must land on its designed strength."""
+    assert node.PRESETS["Spotlight"]["effect_strength"] == 1.2
+    params = node._load_preset("Spotlight", {"effect_strength": 1.0, "preserve_positioning": False})
+    assert params["effect_strength"] == 1.2
+
+
+# --- finding 19: effect_strength must not drive gamma out of range ---------
+
+
+def test_scaled_gamma_stays_within_the_widget_range(node):
+    """The clamp in _scaled_gamma and the widgets' min/max share one source of truth."""
+    bounds = {
+        (s.kwargs.get("min"), s.kwargs.get("max"))
+        for s in node.define_schema().inputs
+        if s.id in ("inner_gamma", "outer_gamma")
+    }
+    assert len(bounds) == 1, bounds
+    low, high = bounds.pop()
+    for gamma in (low, 0.5, 0.77, 1.0, 1.11, 3.0, high):
+        for strength in (0.0, 0.5, 1.0, 2.0, 3.5, 5.0):
+            scaled = node._scaled_gamma(gamma, strength)
+            assert low <= scaled <= high, (gamma, strength, scaled)
+
+
+def test_scaled_gamma_matches_the_widget_at_the_anchor_points(node):
+    for gamma in (0.1, 0.77, 1.0, 2.5, 5.0):
+        assert node._scaled_gamma(gamma, 0.0) == 1.0
+        assert node._scaled_gamma(gamma, 1.0) == gamma
+
+
+def test_strong_effect_strength_dims_without_crushing_to_black(node, run):
+    """A dimming gamma used to go negative past strength ~4 and clip to solid black."""
+    flat = torch.full((1, 16, 16, 3), 0.5)
+    previous = 0.5
+    for strength in (1.0, 2.0, 3.0, 4.0, 5.0):
+        out = run(
+            flat,
+            effect_strength=strength,
+            inner_circle_radius=0.05,
+            outer_circle_radius=0.95,
+            mask_blur=0.0,
+            outer_gamma=0.77,
+            **{k: v for k, v in IDENTITY.items() if k not in ("outer_gamma",)},
+        )[0]
+        value = out[0, 1, 8, 0].item()
+        assert value < previous, (strength, value, previous)
+        assert value > 0.02, f"strength {strength} crushed the zone to black ({value})"
+        previous = value
+
+
+# --- finding 20: single-channel images ------------------------------------
+
+
+def test_single_channel_image_keeps_its_channel_count(run):
+    gray = torch.rand(1, 32, 32, 1)
+    for overrides in (
+        {},
+        {"use_colored_lights": True},
+        {"use_colored_lights": True, "use_gradient_mode": True},
+    ):
+        out_image = run(gray, **overrides)[0]
+        assert out_image.shape == gray.shape, overrides
+
+
+def test_debug_image_is_rgb_for_a_single_channel_image(run):
+    gray = torch.rand(1, 32, 32, 1)
+    debug = run(gray, show_debug_info=True)[2]
+    assert debug.shape == (1, 32, 32, 3)
+    assert debug.abs().max() > 0.0, "grayscale input used to fall through to a black debug view"
+
+
+# --- preset table integrity -----------------------------------------------
+
+
+def test_every_preset_key_is_a_real_input(node):
+    """A typo in a preset key is silently ignored by _load_preset, so pin it here."""
+    schema_ids = {spec.id for spec in node.define_schema().inputs}
+    for name, preset in node.PRESETS.items():
+        unknown = sorted(set(preset) - schema_ids)
+        assert unknown == [], f"{name}: {unknown}"
+
+
+def test_geometry_keys_are_real_inputs(node):
+    schema_ids = {spec.id for spec in node.define_schema().inputs}
+    assert sorted(set(node.GEOMETRY_KEYS) - schema_ids) == []
+
+
+# --- coordinate grids -----------------------------------------------------
+
+
+def test_pixel_grid_is_cheap_to_cache(node):
+    """The grids are broadcast shaped; caching full (H, W) arrays pinned megabytes."""
+    node._coord_cache = {}
+    rows, cols = node._pixel_grid(2048, 2048)
+    assert rows.shape == (2048, 1)
+    assert cols.shape == (1, 2048)
+    node._coord_cache = {}
+
+
+def test_masks_match_a_full_grid_reference(node):
+    """Broadcasting must not change a single pixel of any mask."""
+    import numpy as np
+
+    for width, height in ((97, 63), (64, 64), (1, 1)):
+        y_full, x_full = np.mgrid[0:height, 0:width]
+        for centre in (0.0, 0.3, 0.5, 1.0):
+            radius_px = 0.4 * min(width, height)
+            expected = (
+                ((x_full - centre * width) ** 2 + (y_full - centre * height) ** 2) <= radius_px**2
+            ).astype(np.float32)
+            actual = node.create_circle_mask(width, height, centre, centre, 0.4).numpy()
+            assert np.array_equal(actual, expected), (width, height, centre)
+
+
+# --- schema self-consistency ------------------------------------------------
+# The comfy_api stub records declarations without validating them, so these
+# tests stand in for the checks a real ComfyUI build does at load time.
+
+
+def test_every_widget_default_is_within_its_declared_range(node):
+    offenders = []
+    for spec in node.define_schema().inputs:
+        low, high = spec.kwargs.get("min"), spec.kwargs.get("max")
+        if spec.default is None or low is None or high is None:
+            continue
+        if not (low <= spec.default <= high):
+            offenders.append((spec.id, spec.default, low, high))
+    assert offenders == []
+
+
+def test_combo_defaults_are_offered_options(node):
+    offenders = [
+        (spec.id, spec.default)
+        for spec in node.define_schema().inputs
+        if spec.kwargs.get("options") is not None and spec.default not in spec.kwargs["options"]
+    ]
+    assert offenders == []
+
+
+def test_preset_values_stay_within_widget_bounds(node):
+    """A preset value outside its widget's range could never be set by hand."""
+    specs = {spec.id: spec for spec in node.define_schema().inputs}
+    offenders = []
+    for preset_name, preset in node.PRESETS.items():
+        for key, value in preset.items():
+            low, high = specs[key].kwargs.get("min"), specs[key].kwargs.get("max")
+            if (low is not None and value < low) or (high is not None and value > high):
+                offenders.append((preset_name, key, value, low, high))
+    assert offenders == []

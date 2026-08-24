@@ -30,6 +30,11 @@ logger = logging.getLogger("ComfyUI-ReLight")
 # node had when those operations went through ImageEnhance.
 _LUMA_WEIGHTS = (0.299, 0.587, 0.114)
 
+# Shared by the gamma widgets' min/max and the strength-scaling clamp in
+# _scaled_gamma, so the two can never drift apart.
+GAMMA_MIN = 0.1
+GAMMA_MAX = 5.0
+
 
 def _supports_advanced():
     """Whether this ComfyUI build accepts `advanced=` on widget inputs.
@@ -122,6 +127,9 @@ class ReLight(io.ComfyNode):
         }
     }
 
+    # Scaled by the user's widget rather than overridden outright; see _load_preset.
+    STRENGTH_KEY = "effect_strength"
+
     # Keys a preset may not touch while `preserve_positioning` is on.
     GEOMETRY_KEYS = frozenset({
         "light_position_x", "light_position_y", "inner_circle_radius", "outer_circle_radius",
@@ -151,10 +159,10 @@ class ReLight(io.ComfyNode):
                 io.Mask.Input("mask", optional=True, tooltip="Foreground mask (white=subject, black=background). Needed for occlusion ('Behind Subject' / 'In Front of Subject') and for 'remove_background' compositing. Resized automatically if it does not match the image"),
 
                 # --- Global Behavior ---
-                io.Combo.Input("preset", options=list(cls.PRESETS.keys()), default="None", tooltip="Select a preset or 'None' for custom settings. NOTE: a preset overrides the widgets below - the values shown on the node are ignored for whatever the preset defines"),
+                io.Combo.Input("preset", options=list(cls.PRESETS.keys()), default="None", tooltip="Select a preset or 'None' for custom settings. NOTE: a preset overrides the widgets below - the values shown on the node are ignored for whatever the preset defines. The one exception is 'effect_strength', which scales the preset instead of being replaced by it"),
                 io.Int.Input("num_light_sources", default=1, min=1, max=3, step=1, tooltip="Number of light sources (1-3). Lights 2 and 3 have their own position, radius and color, but in color-correction mode they reuse Light 1's correction settings"),
                 io.Boolean.Input("preserve_positioning", **_adv(default=False, advanced=True, tooltip="Keep your own light positions and radii when a preset is selected, instead of letting the preset set them")),
-                io.Boolean.Input("show_debug_info", **_adv(default=False, advanced=True, tooltip="Output a debug visualization image (first image of the batch)")),
+                io.Boolean.Input("show_debug_info", **_adv(default=False, advanced=True, tooltip="Output a debug visualization image (first image of the batch; zone overlays show Light 1, position and radius indicators are drawn for every light)")),
 
                 # --- Lighting Mode & Occlusion ---
                 io.Boolean.Input("use_colored_lights", default=False, tooltip="Use additive colored light instead of color correction?"),
@@ -164,7 +172,7 @@ class ReLight(io.ComfyNode):
                 io.Boolean.Input("remove_background", default=False, tooltip="Composite the lit result back over the untouched original using the mask, so only the subject is relit. Does not remove anything. Ignored for 'Behind Subject' and 'In Front of Subject'"),
 
                 # --- Global Modifiers ---
-                io.Float.Input("effect_strength", default=1.0, min=0.0, max=5.0, step=0.1, tooltip="Overall intensity multiplier for lighting adjustments/colors. 0.0 leaves the image untouched"),
+                io.Float.Input("effect_strength", default=1.0, min=0.0, max=5.0, step=0.1, tooltip="Overall intensity multiplier for lighting adjustments/colors, gamma included. 0.0 leaves the image untouched. With a preset active this scales the preset's own strength, so 1.0 is the preset as designed. Does not scale rim_amplification or mask_blur - those have their own controls"),
                 io.Float.Input("mask_blur", default=50.0, min=0.0, max=200.0, step=1.0, tooltip="Blur radius for light mask edges (smoother transitions)"),
                 io.Float.Input("rim_amplification", default=2.0, min=0.0, max=10.0, step=0.1, tooltip="Intensity boost specifically for rim light component (when 'Behind Subject')"),
 
@@ -185,14 +193,14 @@ class ReLight(io.ComfyNode):
                 io.Float.Input("inner_saturation", default=5.0, min=-100.0, max=100.0, step=1.0, tooltip="Light 1: Inner area saturation (Color Correction mode)"),
                 io.Float.Input("inner_temperature", default=0.0, min=-100.0, max=100.0, step=1.0, tooltip="Light 1: Inner area temperature (-100=cool, 100=warm)"),
                 io.Float.Input("inner_tint", default=0.0, min=-100.0, max=100.0, step=1.0, tooltip="Light 1: Inner area tint (-100=magenta, 100=green)"),
-                io.Float.Input("inner_gamma", default=1.0, min=0.1, max=5.0, step=0.05, tooltip="Light 1: Inner area gamma. Above 1.0 brightens midtones, below 1.0 darkens them"),
+                io.Float.Input("inner_gamma", default=1.0, min=GAMMA_MIN, max=GAMMA_MAX, step=0.05, tooltip="Light 1: Inner area gamma. Above 1.0 brightens midtones, below 1.0 darkens them"),
                 # Color Correction Mode (Outer Area)
                 io.Float.Input("outer_brightness", **_adv(default=-10.0, min=-100.0, max=100.0, step=1.0, advanced=True, tooltip="Light 1: Outer area brightness (Color Correction mode)")),
                 io.Float.Input("outer_contrast", **_adv(default=0.0, min=-100.0, max=100.0, step=1.0, advanced=True, tooltip="Light 1: Outer area contrast (Color Correction mode)")),
                 io.Float.Input("outer_saturation", **_adv(default=-10.0, min=-100.0, max=100.0, step=1.0, advanced=True, tooltip="Light 1: Outer area saturation (Color Correction mode)")),
                 io.Float.Input("outer_temperature", **_adv(default=0.0, min=-100.0, max=100.0, step=1.0, advanced=True, tooltip="Light 1: Outer area temperature")),
                 io.Float.Input("outer_tint", **_adv(default=0.0, min=-100.0, max=100.0, step=1.0, advanced=True, tooltip="Light 1: Outer area tint")),
-                io.Float.Input("outer_gamma", **_adv(default=0.91, min=0.1, max=5.0, step=0.05, advanced=True, tooltip="Light 1: Outer area gamma. Above 1.0 brightens midtones, below 1.0 darkens them")),
+                io.Float.Input("outer_gamma", **_adv(default=0.91, min=GAMMA_MIN, max=GAMMA_MAX, step=0.05, advanced=True, tooltip="Light 1: Outer area gamma. Above 1.0 brightens midtones, below 1.0 darkens them")),
 
                 # --- Light 2 Settings (Optional) ---
                 io.Float.Input("light2_position_x", **_adv(default=0.8, min=0.0, max=1.0, step=0.01, optional=True, advanced=True, tooltip="Light 2: Horizontal position")),
@@ -236,6 +244,13 @@ class ReLight(io.ComfyNode):
                 continue
             if preserve and key in cls.GEOMETRY_KEYS:
                 continue
+            if key == cls.STRENGTH_KEY:
+                # The master intensity stays under the user's control: the preset
+                # supplies a baseline and the widget scales it. Overriding it
+                # outright left effect_strength - and its documented "0.0 leaves
+                # the image untouched" - dead under the presets that set it.
+                updated_params[key] = value * current_params.get(key, 1.0)
+                continue
             updated_params[key] = value
         if preserve:
             logger.debug("  - Preserving user-defined light positions and radii.")
@@ -243,13 +258,20 @@ class ReLight(io.ComfyNode):
 
     @classmethod
     def _pixel_grid(cls, width, height):
-        """Row/column coordinate grids for an image size, reused across lights."""
+        """Row/column coordinate grids for an image size, reused across lights.
+
+        Broadcast grids - (height, 1) and (1, width) - rather than two full
+        (height, width) arrays. Every expression here combines the two, so numpy
+        materialises the same result, but the cached grids stay kilobytes instead
+        of megabytes: a 4096x4096 image used to pin 268 MB for the life of the
+        process, and each mask cost three full-size temporaries instead of one.
+        """
         key = (height, width)
         cached = cls._coord_cache.get(key)
         if cached is None:
-            cached = np.mgrid[0:height, 0:width]
+            cached = np.ogrid[0:height, 0:width]
             # Single-entry cache: a workflow rarely alternates resolutions, and this
-            # keeps large grids from accumulating.
+            # keeps grids from accumulating.
             cls._coord_cache = {key: cached}
         return cached
 
@@ -405,7 +427,13 @@ class ReLight(io.ComfyNode):
         if intensity <= 0:
             return image
         color_norm = torch.tensor([c / 255.0 for c in color_rgb], device=image.device, dtype=torch.float32)
-        color_light = color_norm.view(1, 1, 1, 3)
+        if image.shape[-1] == 1:
+            # Single-channel input: add the light's luminance. Broadcasting the RGB
+            # triple here would silently turn a 1-channel image into a 3-channel one.
+            weights = torch.tensor(_LUMA_WEIGHTS, device=image.device, dtype=torch.float32)
+            color_light = (color_norm * weights).sum().view(1, 1, 1, 1)
+        else:
+            color_light = color_norm.view(1, 1, 1, 3)
         if mask.dim() == 3:
             mask = mask.unsqueeze(-1)
         result = image + color_light * intensity * mask
@@ -438,19 +466,18 @@ class ReLight(io.ComfyNode):
         # 1. Edge Detection using Sobel filter
         edge_x = ndimage.sobel(fg_mask_np, axis=1)
         edge_y = ndimage.sobel(fg_mask_np, axis=0)
-        edge_magnitude = np.sqrt(edge_x**2 + edge_y**2)
+        grad_magnitude = np.sqrt(edge_x**2 + edge_y**2)
 
-        # Normalize edge magnitude to 0-1 range
-        max_edge = edge_magnitude.max()
+        max_edge = grad_magnitude.max()
         if max_edge > 1e-6:
-            edge_magnitude /= max_edge
+            # Normalize to 0-1, then enhance edges slightly with a power function
+            # (value < 1 thickens/brightens). The raw magnitude is reused below
+            # for the edge normals, so it is computed once and never overwritten.
+            edge_mask = np.power(grad_magnitude / max_edge, 0.7)
         else:
             # A uniform mask (all subject or all background) has no edge to rim.
             logger.debug("No edges detected for rim mask.")
             return np.zeros_like(light_mask_np)
-
-        # Enhance edges slightly using a power function (value < 1 thickens/brightens)
-        edge_mask = np.power(edge_magnitude, 0.7)
 
         # 2. Base Rim Light: Modulate edge mask by the original light intensity
         # This ensures rim light only appears where the original light would hit the edge
@@ -464,8 +491,7 @@ class ReLight(io.ComfyNode):
         light_dist = np.where(light_dist < 1e-6, 1, light_dist)
         light_dir_x = light_dir_x / light_dist
         light_dir_y = light_dir_y / light_dist
-        grad_magnitude_norm = np.sqrt(edge_x**2 + edge_y**2)
-        grad_magnitude_norm = np.where(grad_magnitude_norm < 1e-6, 1, grad_magnitude_norm)
+        grad_magnitude_norm = np.where(grad_magnitude < 1e-6, 1, grad_magnitude)
         normal_x, normal_y = edge_x / grad_magnitude_norm, edge_y / grad_magnitude_norm
         dot_product = light_dir_x * normal_x + light_dir_y * normal_y
         directional_factor = np.clip((-dot_product + 1) / 2, 0, 1)
@@ -487,6 +513,11 @@ class ReLight(io.ComfyNode):
             outer_base_mask = all_outer_base_masks[0].cpu() if all_outer_base_masks else None
 
             img_np = (img_tensor.clamp(0, 1).numpy() * 255).astype(np.uint8)
+            if img_np.shape[-1] == 1:
+                # The debug view is always RGB; PIL cannot build an image from an
+                # (H, W, 1) array, and a grayscale input used to land in the
+                # fatal-error path and come back solid black.
+                img_np = np.repeat(img_np, 3, axis=-1)
             pil_img = Image.fromarray(img_np).convert('RGBA')
             width, height = pil_img.size
             logger.debug(f"  Base image size: {width}x{height}")
@@ -602,7 +633,13 @@ class ReLight(io.ComfyNode):
 
         except Exception:
             logger.exception("--- FATAL ERROR in create_debug_image ---")
-            return torch.zeros_like(original_image[0:1])
+            return cls._blank_debug_image(original_image)
+
+    @staticmethod
+    def _blank_debug_image(image):
+        """Black RGB placeholder matching the image's spatial size."""
+        height, width = image.shape[1], image.shape[2]
+        return torch.zeros((1, height, width, 3), device=image.device, dtype=torch.float32)
 
     # --- Mask preparation ---
 
@@ -890,7 +927,8 @@ class ReLight(io.ComfyNode):
             logger.debug("Skipping final compositing (remove_background=False or no mask).")
 
         # Debug Image Generation
-        debug_image = torch.zeros_like(image[0:1])
+        blank_debug = cls._blank_debug_image(image)
+        debug_image = blank_debug
         if show_debug_info:
             if all_inner_base_masks_for_debug and all_outer_base_masks_for_debug:
                 debug_image = cls.create_debug_image(
@@ -903,9 +941,9 @@ class ReLight(io.ComfyNode):
             else:
                 logger.debug("  Skipping debug image: No base masks were generated/collected.")
 
-        if not isinstance(debug_image, torch.Tensor) or debug_image.shape[1:] != image.shape[1:]:
+        if not isinstance(debug_image, torch.Tensor) or debug_image.shape[1:] != (height, width, 3):
             logger.warning("ReLight: debug image was unusable; returning a black placeholder.")
-            debug_image = torch.zeros_like(image[0:1])
+            debug_image = blank_debug
         elif debug_image.shape[0] != 1:
             debug_image = debug_image[0:1]
 
@@ -919,10 +957,17 @@ class ReLight(io.ComfyNode):
     def _scaled_gamma(cls, gamma, effect_strength):
         """Fade gamma toward identity with effect_strength.
 
-        Gamma was previously the one correction the master strength did not
-        touch, so effect_strength=0 still altered the image.
+        Scaled in exponent space rather than linearly. Both forms agree exactly
+        at strength 0 (identity) and 1 (the value as dialled in), but linear
+        interpolation ran a dimming gamma straight through zero into negative
+        territory above strength ~4 - where the safety clamp in
+        apply_color_correction turned it into an exponent of 100 and crushed the
+        zone to solid black. Clamped to the widget's own range so the master
+        strength can never push gamma somewhere the user could not set by hand.
         """
-        return 1.0 + (gamma - 1.0) * effect_strength
+        if gamma <= 0.0:
+            return 1.0
+        return min(max(gamma ** effect_strength, GAMMA_MIN), GAMMA_MAX)
 
 
 # --- v3 Extension Registration ---

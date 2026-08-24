@@ -4,12 +4,12 @@ A single, self-contained ComfyUI node that adds up to 3 positionable light sourc
 
 ## Current state
 
-_Last verified: 2026-08-08_
+_Last verified: 2026-08-24_
 
-- **Status:** released v3.0.0 (`pyproject.toml`). Published to the Comfy Registry via `.github/workflows/publish_action.yml`, which fires on a `pyproject.toml` version change on `main` — a functional change needs a version bump or it never ships.
+- **Status:** released v3.1.0 (`pyproject.toml`). Published to the Comfy Registry via `.github/workflows/publish_action.yml`, which fires on a `pyproject.toml` version change on `main` — a functional change needs a version bump or it never ships.
 - **Works:** up to three independent light sources; both per-source modes (colored additive light, and color correction with brightness/contrast/saturation/temperature/tint/gamma); circular-falloff and gradient mask shapes; mask-aware front / rim / standard subject interaction; the built-in preset set; the visual debug view. `.github/workflows/test.yml` runs pytest across Python 3.10–3.12 plus a separate, deliberately non-blocking ruff job.
-- **In progress:** nothing — v3.0.0 closed out the known crash, batch-mask and 8-bit precision-loss bugs and added the test suite that had been missing.
-- **Known gaps / next steps:** output quality depends heavily on the input mask, and there is no mask-quality warning; presets are plain dicts at the top of `relight.py` with no way for a user to add their own without editing the file; there is no example beyond the bundled workflow JSON.
+- **In progress:** nothing — v3.0.0 closed out the crash, batch-mask and 8-bit precision-loss bugs and added the test suite; v3.1.0 closed out a second audit pass. See the changelog in `README.md` for what each release changed.
+- **Known gaps / next steps:** output quality depends heavily on the input mask, and the only mask-quality guard is a console-only warning when a mask is >90% white; presets are plain dicts at the top of `relight.py` with no way for a user to add their own without editing the file; there is no example beyond the bundled workflow JSON; the occlusion paths deliberately still do per-frame CPU SciPy work (`fg_mask[b].cpu().numpy()` + Sobel per frame) because vectorising risks numeric drift.
 - **Deep docs:** none — `README.md` is the user-facing reference and `relight.py` is the whole implementation.
 
 ## Architecture in 60 seconds
@@ -19,7 +19,7 @@ _Last verified: 2026-08-08_
 - **Two lighting modes per source:** colored additive RGB light, or precise color correction (brightness, contrast, saturation, temperature, tint, gamma).
 - **Mask shapes:** circular falloff (natural radial lighting with inner/outer radius) or gradient (directional lighting for sunset rays, window light effects).
 - **3D subject interaction** (when used with mask input): front lighting, rim lighting (dramatic edge highlighting with background glow), or standard lighting.
-- **Built-in presets.** Soft Window Light, Dramatic Side Light, Warm Sunset Glow, Cool Blue Moonlight, Studio Key Light, Rim Light, Spotlight, Negative Light.
+- **Built-in presets.** Soft Window Light, Dramatic Side Light, Warm Sunset Glow, Cool Blue Moonlight, Studio Key Light, Rim Light (Behind), Spotlight, Negative Light (Darken).
 - **Visual debugging.** Shows exactly where lights are positioned and how they interact.
 
 ## Layout
@@ -62,14 +62,16 @@ ruff check .
 - No models to download — pure image processing, deterministic output.
 - Dependencies are lightweight: numpy, Pillow, scipy. torch comes from ComfyUI itself.
 - Works best with high-quality foreground masks (e.g. from ComfyUI Essentials).
-- The node uses the ComfyUI v3 schema (`comfy_api.latest`).
+- The node uses the ComfyUI v3 schema (`comfy_api`, `v0_0_2` with a `latest` fallback).
+- Widget inputs are stored *positionally* in saved workflows. Appending is safe; inserting, removing or reordering silently corrupts every workflow in the wild. `test_saved_workflow_widget_order_is_stable` pins the order.
+- A preset overrides whatever widgets it names — except `effect_strength`, which it scales (see `ReLight.STRENGTH_KEY`), and the `GEOMETRY_KEYS` when `preserve_positioning` is on.
 - Presets are defined as dicts at the top of `relight.py` — easy to extend.
 
 ## Security
 
 This file is **public-safe by default**. Never add local paths, credentials, API keys, personal data, infrastructure details, or subscription info.
 
-Before pushing: `pwsh scripts/check-agents-md.ps1 AGENTS.md CLAUDE.md` — must exit 0.
+Before pushing: run your denylist checker over this file and `CLAUDE.md` — it is not vendored here, it lives with your own agent tooling — then re-read to confirm nothing above crept in.
 
 ## Maintenance
 

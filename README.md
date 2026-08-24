@@ -249,10 +249,10 @@ Simulate soft moonlight streaming through a window:
 - **preset**: Pre-configured starting points. Overrides the widgets it defines
 - **num_light_sources**: Use 1, 2, or 3 lights
 - **preserve_positioning**: Keep your own light positions and radii when a preset is selected, instead of letting the preset set them. Off by default so presets apply as designed
-- **show_debug_info**: Output visualization showing base masks and light positions (first image of the batch)
+- **show_debug_info**: Output visualization showing base masks and light positions (first image of the batch). While it is off, the `debug_image` output is a placeholder frame telling you to turn it on — that output is never a rendered view unless this is enabled
 
 ### Lighting Mode & Occlusion
-- **use_colored_lights**: Use additive colored light instead of color correction
+- **use_colored_lights**: Use additive colored light instead of color correction. The two are exclusive: with this on, every `inner_*` / `outer_*` correction value is ignored and only the light's RGB and `light_intensity` apply. "Warm Sunset Glow", "Cool Blue Moonlight" and "Rim Light (Behind)" switch it on, so those presets deliver a colored glow rather than a color grade — turn it off to get their grading half instead
 - **use_gradient_mode**: Use directional gradient masks instead of radial
 - **apply_3d_lighting**: Master switch for occlusion. Leave it on and drive the behaviour with `light_direction`
 - **light_direction**: How light interacts with subject. "Behind"/"In Front" require a mask
@@ -291,6 +291,10 @@ ruff check .
 ```
 
 ### 🔄 Updates
+
+- **v3.1.2** - The debug output explains itself instead of going black
+  - **Fixed: `debug_image` was a solid black frame whenever `show_debug_info` was off**, which is indistinguishable from a crashed node if you have that output wired to a preview. It now renders a legible placeholder naming the toggle that fills it. The same placeholder explains the other two empty cases: no light masks were generated, or the debug view failed to draw (with a console pointer)
+  - Documented that `use_colored_lights` and the `inner_*`/`outer_*` correction values are mutually exclusive, and which presets ship with colored light on
 
 - **v3.1.1** - Fixes a crash that broke every run on v3.0.0 and v3.1.0
   - **Fixed: `AttributeError: Cannot modify class attribute '_coord_cache' on locked class 'ReLightClone'`.** ComfyUI runs a v3 node on a *locked clone* of its class, which forbids writing class attributes. The coordinate cache added in v3.0.0 wrote to the class on the first mask it built, so the node crashed on every execution regardless of settings. The cache now lives at module level; behaviour and output are unchanged

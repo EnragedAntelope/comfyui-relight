@@ -484,6 +484,34 @@ def test_uniform_masks_do_not_crash(run, image):
 # --- debug image ----------------------------------------------------------
 
 
+def test_debug_view_off_is_not_a_black_frame(run, image):
+    """A black debug output is indistinguishable from a crashed node.
+
+    Users wire debug_image to a preview, see solid black and report the node as
+    broken (it was: the only signal that `show_debug_info` was off was a black
+    rectangle). The placeholder must render something legible instead.
+    """
+    debug = run(image, show_debug_info=False)[2]
+    assert debug.shape == (1, 64, 96, 3)
+    assert debug.max() > 0.05, "debug view with the toggle off is still a black frame"
+    assert debug.max() < 1.01
+
+
+def test_debug_view_off_placeholder_is_calmer_than_the_real_view(run, image):
+    """The placeholder must not be mistaken for an actual debug visualization."""
+    off = run(image, show_debug_info=False)[2]
+    on = run(image, show_debug_info=True)[2]
+    assert off.mean() < on.mean()
+
+
+def test_debug_placeholder_falls_back_to_black_when_too_small(run):
+    """Below a line of type there is nowhere to put the message; stay black."""
+    tiny = torch.rand(1, 8, 8, 3)
+    debug = run(tiny, show_debug_info=False)[2]
+    assert debug.shape == (1, 8, 8, 3)
+    assert float(debug.max()) == 0.0
+
+
 def test_debug_image_matches_image_dimensions(run, image):
     debug = run(image, show_debug_info=True)[2]
     assert debug.shape == (1, 64, 96, 3)

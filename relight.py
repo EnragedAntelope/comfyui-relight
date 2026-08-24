@@ -61,6 +61,25 @@ def _supports_advanced():
 _ADVANCED_SUPPORTED = _supports_advanced()
 
 
+def _wrap_debug_text(draw, text, font, max_width):
+    """Greedy word wrap for the debug placeholder, in pixels not characters."""
+    words, lines, line = text.split(), [], ""
+    for word in words:
+        candidate = f"{line} {word}".strip()
+        try:
+            too_wide = draw.textlength(candidate, font=font) > max_width
+        except Exception:
+            too_wide = len(candidate) * 7 > max_width
+        if too_wide and line:
+            lines.append(line)
+            line = word
+        else:
+            line = candidate
+    if line:
+        lines.append(line)
+    return lines
+
+
 def _adv(**kwargs):
     """Pass input kwargs through, dropping `advanced` where unsupported."""
     if not _ADVANCED_SUPPORTED:
@@ -640,13 +659,46 @@ class ReLight(io.ComfyNode):
 
         except Exception:
             logger.exception("--- FATAL ERROR in create_debug_image ---")
-            return cls._blank_debug_image(original_image)
+            return cls._blank_debug_image(
+                original_image, "The debug view could not be drawn - see the ComfyUI console."
+            )
 
     @staticmethod
-    def _blank_debug_image(image):
-        """Black RGB placeholder matching the image's spatial size."""
+    def _blank_debug_image(image, reason=None):
+        """RGB placeholder matching the image's spatial size.
+
+        A solid black frame is indistinguishable from a crash: users wire the
+        debug output to a preview, see black, and reasonably conclude the node
+        failed. So the placeholder states why it is empty and names the widget
+        that fills it. Falls back to plain black only if the text cannot be
+        drawn (no font, or an image too small to hold a line of type).
+        """
         height, width = image.shape[1], image.shape[2]
-        return torch.zeros((1, height, width, 3), device=image.device, dtype=torch.float32)
+        blank = torch.zeros((1, height, width, 3), device=image.device, dtype=torch.float32)
+        if not reason or width < 64 or height < 24:
+            return blank
+        try:
+            canvas = Image.new("RGB", (width, height), (24, 24, 28))
+            draw = ImageDraw.Draw(canvas)
+            try:
+                font = ImageFont.load_default(size=13)
+            except Exception:
+                font = ImageFont.load_default()
+            lines = _wrap_debug_text(draw, reason, font, width - 24)
+            line_height = 17
+            y = max(8, (height - line_height * len(lines)) // 2)
+            for line in lines:
+                try:
+                    text_width = draw.textlength(line, font=font)
+                except Exception:
+                    text_width = len(line) * 7
+                draw.text((max(8, (width - text_width) // 2), y), line, fill=(190, 190, 200), font=font)
+                y += line_height
+            placeholder = np.array(canvas).astype(np.float32) / 255.0
+            return torch.from_numpy(placeholder).unsqueeze(0).to(image.device)
+        except Exception:
+            logger.debug("Could not render the debug placeholder text; using a black frame.")
+            return blank
 
     # --- Mask preparation ---
 
@@ -934,23 +986,27 @@ class ReLight(io.ComfyNode):
             logger.debug("Skipping final compositing (remove_background=False or no mask).")
 
         # Debug Image Generation
-        blank_debug = cls._blank_debug_image(image)
-        debug_image = blank_debug
-        if show_debug_info:
-            if all_inner_base_masks_for_debug and all_outer_base_masks_for_debug:
-                debug_image = cls.create_debug_image(
-                    image,
-                    all_inner_base_masks_for_debug,
-                    all_outer_base_masks_for_debug,
-                    light_sources,
-                    fg_mask,
-                )
-            else:
-                logger.debug("  Skipping debug image: No base masks were generated/collected.")
+        if not show_debug_info:
+            debug_image = cls._blank_debug_image(
+                image, "ReLight debug view is off. Turn on 'show_debug_info' to see light positions and mask zones."
+            )
+        elif all_inner_base_masks_for_debug and all_outer_base_masks_for_debug:
+            debug_image = cls.create_debug_image(
+                image,
+                all_inner_base_masks_for_debug,
+                all_outer_base_masks_for_debug,
+                light_sources,
+                fg_mask,
+            )
+        else:
+            logger.info("ReLight: no light masks were generated, so the debug view has nothing to draw.")
+            debug_image = cls._blank_debug_image(
+                image, "No light masks were generated - check the radius and position settings."
+            )
 
         if not isinstance(debug_image, torch.Tensor) or debug_image.shape[1:] != (height, width, 3):
-            logger.warning("ReLight: debug image was unusable; returning a black placeholder.")
-            debug_image = blank_debug
+            logger.warning("ReLight: debug image was unusable; returning a placeholder.")
+            debug_image = cls._blank_debug_image(image, "The debug view could not be drawn - see the ComfyUI console.")
         elif debug_image.shape[0] != 1:
             debug_image = debug_image[0:1]
 

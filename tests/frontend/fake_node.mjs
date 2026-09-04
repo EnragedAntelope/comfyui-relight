@@ -30,10 +30,21 @@ export function makeNodeData() {
     return { name: schema.node_class, input: { required } };
 }
 
+/** LiteGraph's widget `type`, which the real frontend always sets. */
+function widgetType(widget) {
+    if (widget.options) return "combo";
+    if (typeof widget.default === "boolean") return "toggle";
+    return "number";
+}
+
+/** Row height LiteGraph reserves for one widget. */
+const WIDGET_ROW = 24;
+
 /** A node instance carrying one widget per schema entry, at its default. */
 export function makeNode(overrides = {}) {
     const widgets = schema.widgets.map((widget) => ({
         name: widget.name,
+        type: widgetType(widget),
         value: Object.prototype.hasOwnProperty.call(overrides, widget.name)
             ? overrides[widget.name]
             : widget.default,
@@ -45,10 +56,16 @@ export function makeNode(overrides = {}) {
         type: schema.node_class,
         widgets,
         size: [317, 1250],
-        // computeSize is what growToFitWidgets measures against. 24px a row is
-        // close enough to LiteGraph's real spacing for a "did it grow" test.
+        // LiteGraph sums each widget's own computeSize when it defines one and
+        // reserves a fixed row otherwise, which is what makes a hidden widget's
+        // zero-size stub shrink the node. A fake that just counted widgets
+        // would report a node that never changes height.
         computeSize() {
-            return [210, 30 + this.widgets.length * 24];
+            const rows = this.widgets.reduce((total, widget) => {
+                if (typeof widget.computeSize === "function") return total + widget.computeSize()[1];
+                return total + WIDGET_ROW;
+            }, 0);
+            return [210, 30 + Math.max(0, rows)];
         },
         setSize(size) {
             this.size = size;

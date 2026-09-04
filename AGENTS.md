@@ -28,7 +28,11 @@ _Last verified: 2026-08-24_
 |------|---------|
 | `__init__.py` | ComfyUI custom-node entry point (registers the ReLight node) |
 | `relight.py` | The entire node: lighting engine, presets, UI widgets, image processing |
-| `web/` | Frontend JS served via `WEB_DIRECTORY`: legacy-workflow migration, debug-output tracking, widget visibility, working node recreate |
+| `web/relight_migrate.js` | Remaps a pre-v4 save's positional widget values by name on `onConfigure` |
+| `web/relight_debug.js` | Keeps `debug_output_connected` in step with the `debug_image` wiring, and hides it |
+| `web/relight_ui.js` | Conditional visibility: hides irrelevant blocks, greys what a preset overrides, fits the node |
+| `web/relight_recreate.js` | A "Fix node (recreate)" that replaces instead of duplicating |
+| `web/relight_presets.js` | GENERATED - which widgets each preset overrides |
 | `scripts/dump_frontend_fixture.py` | Dumps the live schema to `tests/frontend/fixtures/schema.json` for the JS tests (`--check` gates staleness) |
 | `requirements-dev.txt` | test-only deps (numpy, Pillow, scipy, pytest, pinned ruff); the pack declares no runtime deps |
 | `tests/` | pytest suite (CI, Python 3.10-3.12) plus `tests/frontend/` (`node --test`) and `tests/fixtures/` (a verbatim v3.1.2 save) |
@@ -72,7 +76,8 @@ python scripts/dump_frontend_fixture.py
 - The node uses the ComfyUI v3 schema (`comfy_api`, `v0_0_2` with a `latest` fallback).
 - Widget inputs are stored *positionally* in saved workflows, but the order is **no longer frozen**. What keeps pre-v4 files loading is `web/relight_migrate.js`, which remaps them by name. So: any schema change - add, remove, rename, reorder - must be paired with a check that the migration still maps correctly, and the legacy order pinned in `tests/test_relight.py` (`LEGACY_WIDGET_ORDER`) must keep matching the JS constant. Get the migration wrong and every saved workflow loads plausible garbage with no error, which is worse than a crash.
 - A preset overrides whatever widgets it names — except `effect_strength`, which it scales (see `ReLight.STRENGTH_KEY`), and the `GEOMETRY_KEYS` when `preserve_positioning` is on.
-- Presets are defined as dicts at the top of `relight.py` — easy to extend.
+- Presets are defined as dicts at the top of `relight.py` — easy to extend. Re-run `scripts/dump_frontend_fixture.py` after any change to them or to the schema; `web/relight_presets.js` and `tests/frontend/fixtures/schema.json` are generated from those and a stale one fails the suite.
+- **Hiding a widget needs both halves** — swap `widget.type` *and* set `widget.hidden = true` — and showing it again means `delete widget.computeSize`, never reassigning a saved copy (most widgets have no own `computeSize`, so the saved value is `undefined` and the zero-size stub stays forever). Grey out (`disabled = true`) anything a preset overrides rather than hiding it, so the node does not reshuffle under the pointer. Never resize from `onDrawForeground`; defer it a frame.
 - `lighting_mode` is two independent switches underneath (`apply_colored`, `apply_correction`); `Both` runs the colour pass and then grades the result. Pre-v4 this was one boolean and the two were mutually exclusive, which left 12 values inert in three presets.
 - **The debug view has no toggle.** Connecting the `debug_image` output is the whole gesture. `debug_output_connected` is a hidden boolean input that `web/relight_debug.js` writes; it exists only because ComfyUI's cache key is built from a node's *inputs*, so without it, wiring an *output* would replay the cached placeholder. Never surface it as a control.
 - **Anything drawn onto a full-resolution frame must scale with it.** `_debug_font_size()` is the one rule (3.5% of frame height, floored at 13px, capped at 64). v3.1.2 drew 13px type on a 1344x768 canvas - legible on the 96x64 test fixture, a black rectangle in a preview - and every debug test passed because they all ran on that fixture. Test overlays at a realistic resolution, measuring ink coverage inside the border, not `max() > 0`.

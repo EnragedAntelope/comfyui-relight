@@ -43,6 +43,11 @@ GAMMA_MAX = 5.0
 # up on the first mask of every run. Never store per-run state on the class.
 _COORD_CACHE = {}
 
+# The cast-shadow trace runs at or below this resolution and is upsampled.
+# The result is blurred immediately afterwards, so tracing a 4K frame at full
+# size buys nothing visible and costs 60x the work of tracing it at 512.
+_SHADOW_TRACE_MAX = 512
+
 
 def _supports_advanced():
     """Whether this ComfyUI build accepts `advanced=` on widget inputs.
@@ -160,15 +165,15 @@ class ReLight(io.ComfyNode):
             "light_position_x": 0.9, "light_position_y": 0.4, "inner_circle_radius": 0.5, "outer_circle_radius": 0.8,
             "inner_brightness": 3, "inner_contrast": 5, "inner_saturation": 10, "inner_temperature": 25, "inner_tint": -5, "inner_gamma": 1.05,
             "outer_brightness": -10, "outer_contrast": 0, "outer_saturation": -5, "outer_temperature": 15, "outer_tint": -5, "outer_gamma": 0.91,
-            "mask_blur": 75, "lighting_mode": MODE_COLORED, "light_color_r": 255, "light_color_g": 200, "light_color_b": 120,
-            "rim_amplification": 1.0, "mask_shape": SHAPE_GRADIENT
+            "mask_blur": 75, "lighting_mode": MODE_BOTH, "light_color_r": 255, "light_color_g": 200, "light_color_b": 120,
+            "light_intensity": 0.45, "rim_amplification": 1.0, "mask_shape": SHAPE_GRADIENT
         },
         "Cool Blue Moonlight": {
             "light_position_x": 0.8, "light_position_y": 0.2, "inner_circle_radius": 0.4, "outer_circle_radius": 0.7,
             "inner_brightness": -5, "inner_contrast": 5, "inner_saturation": -5, "inner_temperature": -20, "inner_tint": 0, "inner_gamma": 0.91,
             "outer_brightness": -20, "outer_contrast": 0, "outer_saturation": -10, "outer_temperature": -30, "outer_tint": 0, "outer_gamma": 0.83,
-            "mask_blur": 60, "lighting_mode": MODE_COLORED, "light_color_r": 120, "light_color_g": 150, "light_color_b": 255,
-            "rim_amplification": 1.0
+            "mask_blur": 60, "lighting_mode": MODE_BOTH, "light_color_r": 120, "light_color_g": 150, "light_color_b": 255,
+            "light_intensity": 0.35, "rim_amplification": 1.0
         },
         "Studio Key Light": {
             "light_position_x": 0.4, "light_position_y": 0.3, "inner_circle_radius": 0.6, "outer_circle_radius": 0.9,
@@ -178,11 +183,12 @@ class ReLight(io.ComfyNode):
         },
         "Rim Light (Behind)": {
             "light_position_x": 0.5, "light_position_y": 0.1, "inner_circle_radius": 0.3, "outer_circle_radius": 0.6,
-            "subject_interaction": SUBJECT_RIM, "lighting_mode": MODE_COLORED,
+            "subject_interaction": SUBJECT_RIM, "lighting_mode": MODE_BOTH,
             "light_color_r": 200, "light_color_g": 255, "light_color_b": 200, "light_intensity": 1.2,
-            "inner_brightness": 0, "inner_contrast": 0, "inner_saturation": 0, "inner_temperature": 0, "inner_tint": 0, "inner_gamma": 1.0,
+            "inner_brightness": 0, "inner_contrast": 8, "inner_saturation": 12, "inner_temperature": 0, "inner_tint": 0, "inner_gamma": 1.0,
             "outer_brightness": 0, "outer_contrast": 0, "outer_saturation": 0, "outer_temperature": 0, "outer_tint": 0, "outer_gamma": 1.0,
-            "mask_blur": 25, "effect_strength": 1.5, "rim_amplification": 2.5
+            "mask_blur": 25, "effect_strength": 1.5, "rim_amplification": 2.5,
+            "shadow_strength": 0.7, "shadow_length": 0.45
         },
         "Spotlight": {
             "light_position_x": 0.5, "light_position_y": 0.4, "inner_circle_radius": 0.1, "outer_circle_radius": 0.25,
@@ -197,6 +203,12 @@ class ReLight(io.ComfyNode):
             "mask_blur": 60, "rim_amplification": 1.0, "effect_strength": 1.0
         }
     }
+
+    # Three presets ("Warm Sunset Glow", "Cool Blue Moonlight", "Rim Light
+    # (Behind)") set a colour *and* a grading block. Up to v3.1.2 the two were
+    # mutually exclusive, so 12 values in each did nothing; they now run as
+    # MODE_BOTH, and the colour intensities were pulled down to compensate for
+    # the grade no longer being discarded.
 
     # Scaled by the user's widget rather than overridden outright; see _load_preset.
     STRENGTH_KEY = "effect_strength"
@@ -517,6 +529,74 @@ class ReLight(io.ComfyNode):
             mask = mask.unsqueeze(-1)
         result = image + color_light * intensity * mask
         return torch.clamp(result, 0.0, 1.0)
+
+    @classmethod
+    def cast_shadow_mask(cls, fg_mask, light_position_x, light_position_y, shadow_length, steps=24):
+        """How much of the subject stands between each pixel and the light.
+
+        A light behind a subject should leave a shadow across the background,
+        and up to v3.1.2 it left none at all: the subject blocked nothing, so
+        the near side of a head was lit exactly as brightly as the far side.
+
+        For every pixel, march back toward the light and take the largest
+        foreground value found along the way, out to `shadow_length` of the
+        frame's shorter side. A pixel whose path to the light crosses the
+        subject comes back 1; one with a clear line of sight comes back 0.
+        Marching stops at the light itself, so a pixel closer to the light than
+        the subject is never shadowed by it.
+
+        Vectorised through `grid_sample` rather than a per-pixel loop:
+        deterministic, identical on CPU and GPU, and no SciPy. Returns a
+        (batch, height, width) mask on the input's device.
+        """
+        batch, height, width = fg_mask.shape
+        device = fg_mask.device
+        if shadow_length <= 0 or steps < 1:
+            return torch.zeros_like(fg_mask)
+
+        # Trace small and upsample; the caller blurs the result anyway.
+        scale = min(1.0, _SHADOW_TRACE_MAX / max(height, width))
+        trace_h = max(8, int(round(height * scale)))
+        trace_w = max(8, int(round(width * scale)))
+        source = fg_mask.unsqueeze(1)
+        if (trace_h, trace_w) != (height, width):
+            source = F.interpolate(source, size=(trace_h, trace_w), mode="bilinear", align_corners=False)
+
+        rows = torch.arange(trace_h, device=device, dtype=torch.float32).view(trace_h, 1)
+        cols = torch.arange(trace_w, device=device, dtype=torch.float32).view(1, trace_w)
+        light_x = light_position_x * trace_w
+        light_y = light_position_y * trace_h
+        to_light_x = light_x - cols
+        to_light_y = light_y - rows
+        distance = torch.sqrt(to_light_x * to_light_x + to_light_y * to_light_y).clamp(min=1e-6)
+        step_x = to_light_x / distance
+        step_y = to_light_y / distance
+        reach = shadow_length * min(trace_w, trace_h)
+
+        shadow = torch.zeros((batch, trace_h, trace_w), device=device, dtype=torch.float32)
+        denom_x = max(trace_w - 1, 1)
+        denom_y = max(trace_h - 1, 1)
+        for step in range(1, steps + 1):
+            travelled = torch.clamp(distance, max=reach * step / steps)
+            sample_x = cols + step_x * travelled
+            sample_y = rows + step_y * travelled
+            grid = torch.stack(
+                [
+                    (sample_x / denom_x * 2.0 - 1.0).expand(trace_h, trace_w),
+                    (sample_y / denom_y * 2.0 - 1.0).expand(trace_h, trace_w),
+                ],
+                dim=-1,
+            ).unsqueeze(0).expand(batch, -1, -1, -1)
+            sampled = F.grid_sample(
+                source, grid, mode="bilinear", padding_mode="zeros", align_corners=True
+            )
+            shadow = torch.maximum(shadow, sampled.squeeze(1))
+
+        if (trace_h, trace_w) != (height, width):
+            shadow = F.interpolate(
+                shadow.unsqueeze(1), size=(height, width), mode="bilinear", align_corners=False
+            ).squeeze(1)
+        return shadow.clamp(0.0, 1.0)
 
     @classmethod
     def calculate_rim_mask(cls, light_mask_np, fg_mask_np, light_position_x, light_position_y):
@@ -901,6 +981,8 @@ class ReLight(io.ComfyNode):
         debug_output_connected = bool(params.get('debug_output_connected', False)) or cls._debug_output_is_consumed()
         effect_strength = params.get('effect_strength', 1.0)
         rim_amplification = params.get('rim_amplification', 2.0)
+        shadow_strength = params.get('shadow_strength', 0.6)
+        shadow_length = params.get('shadow_length', 0.35)
         num_light_sources = params.get('num_light_sources', 1)
         mask_blur = params.get('mask_blur', 50.0)
         input_mask = params.get('mask', None)
@@ -997,9 +1079,32 @@ class ReLight(io.ComfyNode):
                     rim_per_image.append(np.clip(raw_rim_mask_np * rim_amplification, 0.0, 1.0))
                 amplified_rim = torch.from_numpy(np.stack(rim_per_image)).to(device)
 
-                background_light_mask = outer_mask_base.unsqueeze(0) * (1.0 - fg_mask)
-                combined_mask_unblurred = torch.clamp(amplified_rim + background_light_mask, 0, 1)
-                final_light_mask = cls.apply_mask_blur(combined_mask_unblurred, mask_blur)
+                # The background glow gets real falloff. Up to v3.1.2 it was the
+                # hard 0/1 outer disc, so "glow" was a flat slab with whatever
+                # softness mask_blur happened to put on its rim.
+                if use_gradient_mode:
+                    background_base = outer_mask_base
+                else:
+                    background_base = cls.create_falloff_mask(
+                        width, height, light["position_x"], light["position_y"],
+                        light["inner_radius"], light["outer_radius"],
+                    ).to(device)
+
+                background_light_mask = background_base.unsqueeze(0).expand(batch_size, -1, -1)
+                if shadow_strength > 0.0 and shadow_length > 0.0:
+                    shadow = cls.cast_shadow_mask(
+                        fg_mask, light["position_x"], light["position_y"], shadow_length
+                    )
+                    background_light_mask = background_light_mask * (1.0 - shadow * shadow_strength)
+
+                # Blur the two halves SEPARATELY, and re-apply the silhouette to
+                # the blurred background. v3.1.2 subtracted the subject before
+                # the blur, so the blur smeared background light straight back
+                # across the silhouette edge onto the face - the single most
+                # direct cause of "Behind Subject does not occlude".
+                blurred_rim = cls.apply_mask_blur(amplified_rim, mask_blur)
+                blurred_background = cls.apply_mask_blur(background_light_mask, mask_blur) * (1.0 - fg_mask)
+                final_light_mask = torch.clamp(blurred_rim + blurred_background, 0, 1)
                 colored_light_mask = correction_mask = final_light_mask
                 logger.debug(f"  Final Behind Subject Mask: Max={torch.max(final_light_mask):.3f}")
 

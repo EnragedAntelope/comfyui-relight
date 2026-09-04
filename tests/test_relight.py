@@ -512,6 +512,220 @@ def test_preset_shadow_zones_actually_darken(node):
         assert out.mean() < 0.5, f"{name}: outer zone should darken"
 
 
+# --- finding 4: "Behind Subject" did not occlude ---------------------------
+
+RIM = "Light behind subject (rim)"
+
+
+def _subject_mask(height=64, width=96, top=12, bottom=52, left=32, right=64):
+    """A solid rectangular subject in the middle of the frame."""
+    mask = torch.zeros(1, height, width)
+    mask[:, top:bottom, left:right] = 1.0
+    return mask
+
+
+def test_behind_subject_does_not_light_the_subject(run):
+    """Background light must not land on the subject it is behind.
+
+    Up to v3.1.2 the silhouette was subtracted *before* the blur, so a 50px
+    blur smeared background light straight back across the edge onto the face.
+    That was the reported "Behind Subject does not occlude".
+    """
+    flat = torch.full((1, 64, 96, 3), 0.25)
+    mask = _subject_mask()
+    lit = run(
+        flat,
+        mask=mask,
+        subject_interaction=RIM,
+        lighting_mode="Colored Light",
+        rim_amplification=0.0,  # isolate the background glow from the rim
+        light_position_x=0.5,
+        light_position_y=0.5,
+        inner_circle_radius=0.5,
+        outer_circle_radius=1.0,
+        mask_blur=50.0,
+    )[0]
+
+    inside = mask[0].bool()
+    changed = (lit[0] - flat[0]).abs().sum(-1)
+    assert float(changed[inside].max()) < 1e-5, "background light leaked onto the subject"
+    assert float(changed[~inside].max()) > 0.01, "no background light at all"
+
+
+def test_behind_subject_still_rims_the_subject_edge(run):
+    """Occluding the background must not switch the rim highlight off."""
+    flat = torch.full((1, 64, 96, 3), 0.25)
+    mask = _subject_mask()
+    lit = run(
+        flat,
+        mask=mask,
+        subject_interaction=RIM,
+        lighting_mode="Colored Light",
+        rim_amplification=4.0,
+        mask_blur=5.0,
+    )[0]
+    changed = (lit[0] - flat[0]).abs().sum(-1)
+    assert float(changed[mask[0].bool()].max()) > 0.01, "the rim highlight is gone"
+
+
+def test_the_subject_casts_a_shadow_away_from_the_light(run):
+    """With the light above, the background below the subject is darker.
+
+    v3.1.2 cast no shadow at all: the subject blocked nothing, so the near side
+    of a head was lit exactly as brightly as the far side.
+    """
+    flat = torch.full((1, 64, 96, 3), 0.25)
+    mask = _subject_mask()
+    lit = run(
+        flat,
+        mask=mask,
+        subject_interaction=RIM,
+        lighting_mode="Colored Light",
+        rim_amplification=0.0,
+        light_position_x=0.5,
+        light_position_y=0.05,
+        inner_circle_radius=0.6,
+        outer_circle_radius=1.5,
+        mask_blur=10.0,
+        shadow_strength=1.0,
+        shadow_length=0.8,
+    )[0]
+
+    columns = slice(32, 64)  # directly above and below the subject
+    above = lit[0, 2:10, columns].mean()
+    below = lit[0, 54:62, columns].mean()
+    assert below < above, "the subject cast no shadow below it"
+
+
+def test_shadow_strength_zero_casts_no_shadow(run):
+    flat = torch.full((1, 64, 96, 3), 0.25)
+    mask = _subject_mask()
+    common = dict(
+        mask=mask,
+        subject_interaction=RIM,
+        lighting_mode="Colored Light",
+        rim_amplification=0.0,
+        light_position_y=0.05,
+        outer_circle_radius=1.5,
+        shadow_length=0.8,
+    )
+    off = run(flat, shadow_strength=0.0, **common)[0]
+    on = run(flat, shadow_strength=1.0, **common)[0]
+    assert not torch.allclose(off, on), "shadow_strength had no effect"
+    assert off.mean() > on.mean(), "the shadow should remove light, not add it"
+
+
+def test_shadow_length_zero_casts_no_shadow(run):
+    flat = torch.full((1, 64, 96, 3), 0.25)
+    mask = _subject_mask()
+    common = dict(
+        mask=mask,
+        subject_interaction=RIM,
+        lighting_mode="Colored Light",
+        rim_amplification=0.0,
+        light_position_y=0.05,
+        outer_circle_radius=1.5,
+        shadow_strength=1.0,
+    )
+    none = run(flat, shadow_length=0.0, **common)[0]
+    some = run(flat, shadow_length=0.8, **common)[0]
+    assert none.mean() > some.mean()
+
+
+def test_cast_shadow_mask_shadows_only_behind_the_subject(node):
+    """The tracer itself: a clear line of sight to the light is never shadowed."""
+    mask = _subject_mask()
+    shadow = node.cast_shadow_mask(mask, 0.5, 0.0, shadow_length=1.0)
+    assert shadow.shape == mask.shape
+    assert float(shadow.max()) <= 1.0 and float(shadow.min()) >= 0.0
+    # Below the subject, looking up at the light, the subject is in the way.
+    assert float(shadow[0, 56:62, 40:56].mean()) > 0.5
+    # Above it, the light is in plain view.
+    assert float(shadow[0, 0:8, 40:56].mean()) < 0.05
+
+
+def test_cast_shadow_mask_is_empty_without_a_subject(node):
+    empty = torch.zeros(1, 64, 96)
+    assert float(node.cast_shadow_mask(empty, 0.5, 0.0, 0.5).max()) == 0.0
+
+
+def test_cast_shadow_mask_matches_a_full_resolution_trace(node):
+    """The tracer downsamples for speed; that must not change what it draws.
+
+    _SHADOW_TRACE_MAX exists to keep a 4K frame affordable. If the shortcut
+    disagreed with the honest version the saving would not be worth having.
+    """
+    mask = _subject_mask(height=256, width=256, top=64, bottom=160, left=96, right=160)
+    fast = node.cast_shadow_mask(mask, 0.5, 0.0, shadow_length=0.6)
+    slow = node.cast_shadow_mask(mask, 0.5, 0.0, shadow_length=0.6, steps=96)
+    assert float((fast - slow).abs().mean()) < 0.02
+
+
+def test_cast_shadow_mask_handles_a_batch(node):
+    masks = torch.cat([_subject_mask(), torch.zeros(1, 64, 96)], dim=0)
+    shadow = node.cast_shadow_mask(masks, 0.5, 0.0, 0.6)
+    assert shadow.shape == (2, 64, 96)
+    assert float(shadow[1].max()) == 0.0
+    assert float(shadow[0].max()) > 0.5
+
+
+# --- finding 3: colored light and correction were mutually exclusive -------
+
+
+def test_both_mode_differs_from_either_single_mode(run, image):
+    common = dict(
+        light_color_r=255, light_color_g=200, light_color_b=120, light_intensity=0.5,
+        inner_brightness=20.0, inner_saturation=15.0, inner_temperature=20.0,
+    )
+    colored = run(image, lighting_mode="Colored Light", **common)[0]
+    correction = run(image, lighting_mode="Color Correction", **common)[0]
+    both = run(image, lighting_mode="Both", **common)[0]
+    assert not torch.allclose(both, colored)
+    assert not torch.allclose(both, correction)
+
+
+def test_both_mode_is_the_correction_applied_to_the_colored_result(run, node, image):
+    """'Both' is defined as colour first, then grade the lit image.
+
+    Chaining two ReLight nodes - colour, then correction - must land in the
+    same place, or 'Both' means something other than what it says.
+    """
+    common = dict(
+        light_color_r=255, light_color_g=200, light_color_b=120, light_intensity=0.5,
+        inner_brightness=20.0, inner_saturation=15.0, inner_temperature=20.0,
+    )
+    both = run(image, lighting_mode="Both", **common)[0]
+    colored = run(image, lighting_mode="Colored Light", **common)[0]
+    chained = run(colored, lighting_mode="Color Correction", **common)[0]
+    assert torch.allclose(both, chained, atol=1e-6)
+
+
+def test_colored_only_mode_is_unchanged_by_the_both_path(run, image):
+    """The single modes must keep their exact maths; only 'Both' is new."""
+    colored = run(image, lighting_mode="Colored Light", light_intensity=0.5)[0]
+    manual = run(image, lighting_mode="Colored Light", light_intensity=0.5, inner_brightness=99.0)[0]
+    assert torch.equal(colored, manual), "correction values leaked into Colored Light"
+
+
+def test_correction_only_mode_ignores_the_light_colour(run, image):
+    plain = run(image, lighting_mode="Color Correction")[0]
+    coloured_widgets = run(image, lighting_mode="Color Correction", light_color_r=0, light_color_g=255, light_color_b=0, light_intensity=3.0)[0]
+    assert torch.equal(plain, coloured_widgets)
+
+
+def test_the_three_retuned_presets_use_both_modes(node):
+    """The audit finding, pinned: these three set a colour and a grading block.
+
+    Before v4.0.0 the two were mutually exclusive, so 12 values in each preset
+    were inert. The numbers themselves are a visual judgement; this only pins
+    that both halves are asked for.
+    """
+    for name in ("Warm Sunset Glow", "Cool Blue Moonlight", "Rim Light (Behind)"):
+        preset = node.PRESETS[name]
+        assert preset["lighting_mode"] == node.MODE_BOTH, name
+        assert any(key.startswith(("inner_", "outer_")) for key in preset), name
+
+
 # --- presets and lights ---------------------------------------------------
 
 

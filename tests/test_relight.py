@@ -6,6 +6,8 @@ Each test names the audit finding it locks in. They run headless against the
 
 import json
 import pathlib
+import re
+import sys
 
 import torch
 
@@ -48,66 +50,168 @@ def test_every_input_has_a_tooltip(node):
     assert missing == []
 
 
-def test_saved_workflow_widget_order_is_stable(node):
-    """Saved workflows store widget values positionally.
+#: Widget order exactly as v3.1.2 serialised it. Not a schema expectation - the
+#: v4 schema deliberately reorders - but the input to `web/relight_migrate.js`,
+#: which is the only thing keeping pre-v4 workflows loading correctly.
+LEGACY_WIDGET_ORDER = [
+    "preset",
+    "num_light_sources",
+    "preserve_positioning",
+    "show_debug_info",
+    "use_colored_lights",
+    "use_gradient_mode",
+    "apply_3d_lighting",
+    "light_direction",
+    "remove_background",
+    "effect_strength",
+    "mask_blur",
+    "rim_amplification",
+    "light_position_x",
+    "light_position_y",
+    "inner_circle_radius",
+    "outer_circle_radius",
+    "light_color_r",
+    "light_color_g",
+    "light_color_b",
+    "light_intensity",
+    "inner_brightness",
+    "inner_contrast",
+    "inner_saturation",
+    "inner_temperature",
+    "inner_tint",
+    "inner_gamma",
+    "outer_brightness",
+    "outer_contrast",
+    "outer_saturation",
+    "outer_temperature",
+    "outer_tint",
+    "outer_gamma",
+    "light2_position_x",
+    "light2_position_y",
+    "light2_inner_radius",
+    "light2_outer_radius",
+    "light2_color_r",
+    "light2_color_g",
+    "light2_color_b",
+    "light2_intensity",
+    "light3_position_x",
+    "light3_position_y",
+    "light3_inner_radius",
+    "light3_outer_radius",
+    "light3_color_r",
+    "light3_color_g",
+    "light3_color_b",
+    "light3_intensity",
+]
 
-    Reordering or inserting an input silently corrupts every workflow already in
-    the wild, so the order is pinned here deliberately. If this test fails,
-    that is the change to reconsider - not the expectation.
+#: Widgets renamed or merged away in v4.0.0, and what the migration turns them
+#: into. Pinned here so a rename in relight.py without a matching change in the
+#: JS goes red.
+LEGACY_WIDGETS_REMOVED = {
+    # show_debug_info has no v4 counterpart at all: the debug view now follows
+    # whether the debug_image output is wired, so there is nothing to carry over.
+    "show_debug_info": None,
+    "use_colored_lights": "lighting_mode",
+    "use_gradient_mode": "mask_shape",
+    "apply_3d_lighting": "subject_interaction",
+    "light_direction": "subject_interaction",
+}
+
+
+def _js_string_array(source, name):
+    """Pull `export const <name> = [ "a", "b" ];` out of the migration module."""
+    match = re.search(
+        r"export const " + name + r" = \[(.*?)\];", source, re.DOTALL
+    )
+    assert match, f"{name} not found in web/relight_migrate.js"
+    return re.findall(r'"((?:[^"\\]|\\.)*)"', match.group(1))
+
+
+def test_frontend_schema_fixture_is_current():
+    """The JS tests build their fake nodes from a dump of this schema.
+
+    A stale dump means the frontend suite is testing a node shape that no
+    longer exists - green, and proving nothing.
+    """
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    try:
+        import dump_frontend_fixture
+    finally:
+        sys.path.pop(0)
+    assert dump_frontend_fixture.main(["--check"]) == 0
+
+
+def test_legacy_widget_order_matches_the_migration_constant():
+    """The JS migration and this file must agree on the pre-v4 widget order.
+
+    The whole migration is a name-for-index lookup against that order. If the
+    two copies drift, every saved workflow loads plausible-looking garbage -
+    no error, wrong values. So they are pinned against each other here.
+    """
+    source = (REPO_ROOT / "web" / "relight_migrate.js").read_text(encoding="utf-8")
+    assert _js_string_array(source, "LEGACY_ORDER") == LEGACY_WIDGET_ORDER
+
+
+def test_migration_knows_every_legacy_preset_name(node):
+    """The legacy-save sentinel checks index 0 against this list."""
+    source = (REPO_ROOT / "web" / "relight_migrate.js").read_text(encoding="utf-8")
+    assert _js_string_array(source, "LEGACY_PRESETS") == list(node.PRESETS)
+
+
+def test_migration_covers_every_legacy_widget(node):
+    """Every pre-v4 widget either still exists by name, or has a translation."""
+    current = {spec.id for spec in node.define_schema().inputs}
+    unhandled = [
+        name
+        for name in LEGACY_WIDGET_ORDER
+        if name not in current and name not in LEGACY_WIDGETS_REMOVED
+    ]
+    assert unhandled == [], "no migration path for these pre-v4 widgets"
+
+
+def test_removed_widgets_map_onto_widgets_that_exist(node):
+    current = {spec.id for spec in node.define_schema().inputs}
+    missing = sorted(
+        {
+            target
+            for target in LEGACY_WIDGETS_REMOVED.values()
+            if target is not None and target not in current
+        }
+    )
+    assert missing == []
+
+
+def test_current_widget_count_cannot_be_mistaken_for_a_legacy_save(node):
+    """The migration's length check must not fire on a current save.
+
+    `looksLegacy` gates on a 48-value array plus two sentinels. If the v4 schema
+    ever had exactly 48 widgets the length gate would be load-bearing on the
+    sentinels alone, which is a thinner guarantee than intended.
     """
     widget_ids = [
         spec.id for spec in node.define_schema().inputs if spec.id not in ("image", "mask")
     ]
-    assert widget_ids == [
-        "preset",
-        "num_light_sources",
-        "preserve_positioning",
-        "show_debug_info",
-        "use_colored_lights",
-        "use_gradient_mode",
-        "apply_3d_lighting",
-        "light_direction",
-        "remove_background",
-        "effect_strength",
-        "mask_blur",
-        "rim_amplification",
-        "light_position_x",
-        "light_position_y",
-        "inner_circle_radius",
-        "outer_circle_radius",
-        "light_color_r",
-        "light_color_g",
-        "light_color_b",
-        "light_intensity",
-        "inner_brightness",
-        "inner_contrast",
-        "inner_saturation",
-        "inner_temperature",
-        "inner_tint",
-        "inner_gamma",
-        "outer_brightness",
-        "outer_contrast",
-        "outer_saturation",
-        "outer_temperature",
-        "outer_tint",
-        "outer_gamma",
-        "light2_position_x",
-        "light2_position_y",
-        "light2_inner_radius",
-        "light2_outer_radius",
-        "light2_color_r",
-        "light2_color_g",
-        "light2_color_b",
-        "light2_intensity",
-        "light3_position_x",
-        "light3_position_y",
-        "light3_inner_radius",
-        "light3_outer_radius",
-        "light3_color_r",
-        "light3_color_g",
-        "light3_color_b",
-        "light3_intensity",
-    ]
+    assert len(widget_ids) != len(LEGACY_WIDGET_ORDER)
+
+
+def test_legacy_fixture_workflow_is_a_real_pre_v4_save():
+    """The migration fixture must be a genuine v3.1.2 save, not a synthetic array.
+
+    A hand-written array can be made to satisfy any migration, including a wrong
+    one. This is the shipped v3.1.2 example workflow, kept verbatim.
+    """
+    graph = json.loads(
+        (REPO_ROOT / "tests" / "fixtures" / "legacy_v3.1.2_workflow.json").read_text()
+    )
+    relight = [n for n in graph["nodes"] if n["type"] == "ReLight"]
+    assert len(relight) == 1
+    values = relight[0]["widgets_values"]
+    assert len(values) == len(LEGACY_WIDGET_ORDER)
+    assert values[LEGACY_WIDGET_ORDER.index("light_direction")] in (
+        "Behind Subject",
+        "In Front of Subject",
+        "No Occlusion",
+    )
 
 
 def test_shipped_example_workflows_match_the_schema(node):
@@ -127,11 +231,12 @@ def test_shipped_example_workflows_match_the_schema(node):
             assert len(values) == len(widget_ids), f"{path.name}: widget count drifted"
             settings = dict(zip(widget_ids, values))
             assert settings["preset"] in node.PRESETS, f"{path.name}: unknown preset"
-            assert settings["light_direction"] in (
-                "Behind Subject",
-                "In Front of Subject",
-                "No Occlusion",
-            ), f"{path.name}: unknown light_direction"
+            for widget, allowed in (
+                ("lighting_mode", node.LIGHTING_MODES),
+                ("mask_shape", node.MASK_SHAPES),
+                ("subject_interaction", node.SUBJECT_INTERACTIONS),
+            ):
+                assert settings[widget] in allowed, f"{path.name}: unknown {widget}"
 
 
 # --- basic contract -------------------------------------------------------
@@ -163,7 +268,7 @@ def test_input_image_is_not_mutated(run, image):
 def test_mask_smaller_than_image_is_resized(run, image):
     mask = torch.ones(1, 32, 48)
     out_image, out_mask, _ = run(
-        image, mask=mask, light_direction="Behind Subject", remove_background=True
+        image, mask=mask, subject_interaction="Light behind subject (rim)", remove_background=True
     )
     assert out_image.shape == image.shape
     assert out_mask.shape == (1, 64, 96)
@@ -188,7 +293,7 @@ def test_rgba_image_survives_and_keeps_alpha(run):
 
 def test_rgba_image_in_colored_mode(run):
     rgba = torch.rand(1, 32, 32, 4)
-    out_image = run(rgba, use_colored_lights=True)[0]
+    out_image = run(rgba, lighting_mode="Colored Light")[0]
     assert out_image.shape == rgba.shape
 
 
@@ -206,8 +311,8 @@ def test_batch_uses_each_frames_own_mask(run):
     out = run(
         batch,
         mask=mask,
-        light_direction="Behind Subject",
-        use_colored_lights=True,
+        subject_interaction="Light behind subject (rim)",
+        lighting_mode="Colored Light",
     )[0]
     delta = (out - batch).abs().mean(dim=(1, 2, 3))
 
@@ -234,7 +339,7 @@ def test_batch_composite_is_per_frame(run):
 def test_mask_passes_through_when_both_consumers_are_off(run, image):
     mask = torch.ones(1, 64, 96)
     out_mask = run(
-        image, mask=mask, apply_3d_lighting=False, remove_background=False
+        image, mask=mask, subject_interaction="None", remove_background=False
     )[1]
     assert torch.allclose(out_mask, mask)
 
@@ -286,7 +391,7 @@ def test_zero_effect_strength_is_a_no_op_with_a_preset(run, image):
 
 
 def test_zero_intensity_colored_light_is_a_no_op(run, image):
-    out_image = run(image, use_colored_lights=True, light_intensity=0.0)[0]
+    out_image = run(image, lighting_mode="Colored Light", light_intensity=0.0)[0]
     assert torch.allclose(out_image, image, atol=1e-6)
 
 
@@ -353,14 +458,13 @@ def test_remove_background_still_composites_when_enabled(run, image):
 
 
 def test_remove_background_applies_when_occlusion_is_switched_off(run, image):
-    """apply_3d_lighting=False means plain lighting, which still needs compositing."""
+    """No subject interaction means plain lighting, which still needs compositing."""
     mask = torch.zeros(1, 64, 96)
     mask[:, 16:48, 24:72] = 1.0
     out_image = run(
         image,
         mask=mask,
-        apply_3d_lighting=False,
-        light_direction="Behind Subject",
+        subject_interaction="None",
         remove_background=True,
         inner_brightness=60.0,
     )[0]
@@ -426,7 +530,7 @@ def test_reported_warm_sunset_glow_run(run, image):
 
 def test_reported_warm_sunset_glow_run_in_gradient_mode(run, image):
     """Same report, gradient masks - the path the traceback died on."""
-    out_image = run(image, preset="Warm Sunset Glow", use_gradient_mode=True)[0]
+    out_image = run(image, preset="Warm Sunset Glow", mask_shape="Directional gradient")[0]
     assert out_image.shape == image.shape
     assert torch.isfinite(out_image).all()
 
@@ -440,25 +544,25 @@ def test_all_presets_execute_cleanly(node, run, image):
         assert torch.isfinite(out_image).all(), name
 
 
-def test_all_light_directions_execute(run, image):
+def test_all_subject_interactions_execute(node, run, image):
     mask = torch.zeros(1, 64, 96)
     mask[:, 16:48, 24:72] = 1.0
-    for direction in ("No Occlusion", "In Front of Subject", "Behind Subject"):
-        out_image = run(image, mask=mask, light_direction=direction)[0]
-        assert torch.isfinite(out_image).all(), direction
+    for interaction in node.SUBJECT_INTERACTIONS:
+        out_image = run(image, mask=mask, subject_interaction=interaction)[0]
+        assert torch.isfinite(out_image).all(), interaction
 
 
 def test_multiple_light_sources(run, image):
     for count in (1, 2, 3):
-        out_image = run(image, num_light_sources=count, use_colored_lights=True)[0]
+        out_image = run(image, num_light_sources=count, lighting_mode="Colored Light")[0]
         assert torch.isfinite(out_image).all()
 
 
 def test_gradient_mode_with_light_at_exact_centre(run, image):
     out_image = run(
         image,
-        use_gradient_mode=True,
-        use_colored_lights=True,
+        mask_shape="Directional gradient",
+        lighting_mode="Colored Light",
         light_position_x=0.5,
         light_position_y=0.5,
     )[0]
@@ -477,56 +581,56 @@ def test_zero_radii(run, image):
 
 def test_uniform_masks_do_not_crash(run, image):
     for mask in (torch.ones(1, 64, 96), torch.zeros(1, 64, 96)):
-        out_image = run(image, mask=mask, light_direction="Behind Subject")[0]
+        out_image = run(image, mask=mask, subject_interaction="Light behind subject (rim)")[0]
         assert torch.isfinite(out_image).all()
 
 
 # --- debug image ----------------------------------------------------------
 
 
-def test_debug_view_off_is_not_a_black_frame(run, image):
+def test_unconnected_debug_view_is_not_a_black_frame(run, image):
     """A black debug output is indistinguishable from a crashed node.
 
     Users wire debug_image to a preview, see solid black and report the node as
-    broken (it was: the only signal that `show_debug_info` was off was a black
+    broken (it was: the only signal that the debug view was off was a black
     rectangle). The placeholder must render something legible instead.
     """
-    debug = run(image, show_debug_info=False)[2]
+    debug = run(image, debug_output_connected=False)[2]
     assert debug.shape == (1, 64, 96, 3)
-    assert debug.max() > 0.05, "debug view with the toggle off is still a black frame"
+    assert debug.max() > 0.05, "an unconnected debug output is still a black frame"
     assert debug.max() < 1.01
 
 
-def test_debug_view_off_placeholder_is_calmer_than_the_real_view(run, image):
+def test_unconnected_debug_placeholder_is_calmer_than_the_real_view(run, image):
     """The placeholder must not be mistaken for an actual debug visualization."""
-    off = run(image, show_debug_info=False)[2]
-    on = run(image, show_debug_info=True)[2]
+    off = run(image, debug_output_connected=False)[2]
+    on = run(image, debug_output_connected=True)[2]
     assert off.mean() < on.mean()
 
 
 def test_debug_placeholder_falls_back_to_black_when_too_small(run):
     """Below a line of type there is nowhere to put the message; stay black."""
     tiny = torch.rand(1, 8, 8, 3)
-    debug = run(tiny, show_debug_info=False)[2]
+    debug = run(tiny, debug_output_connected=False)[2]
     assert debug.shape == (1, 8, 8, 3)
     assert float(debug.max()) == 0.0
 
 
 def test_debug_image_matches_image_dimensions(run, image):
-    debug = run(image, show_debug_info=True)[2]
+    debug = run(image, debug_output_connected=True)[2]
     assert debug.shape == (1, 64, 96, 3)
 
 
 def test_debug_image_with_a_batch(run):
     batch = torch.rand(4, 48, 64, 3)
-    out_image, _, debug = run(batch, show_debug_info=True)
+    out_image, _, debug = run(batch, debug_output_connected=True)
     assert out_image.shape == batch.shape
     assert debug.shape == (1, 48, 64, 3)
 
 
 def test_debug_image_for_rgba_input(run):
     rgba = torch.rand(1, 32, 32, 4)
-    debug = run(rgba, show_debug_info=True)[2]
+    debug = run(rgba, debug_output_connected=True)[2]
     assert debug.shape == (1, 32, 32, 3)
 
 
@@ -536,7 +640,7 @@ def test_debug_image_for_rgba_input(run):
 def test_wide_and_tall_images(run):
     for shape in ((1, 16, 256, 3), (1, 256, 16, 3), (1, 1, 1, 3)):
         img = torch.rand(*shape)
-        out_image = run(img, use_colored_lights=True)[0]
+        out_image = run(img, lighting_mode="Colored Light")[0]
         assert out_image.shape == img.shape
 
 
@@ -623,8 +727,8 @@ def test_single_channel_image_keeps_its_channel_count(run):
     gray = torch.rand(1, 32, 32, 1)
     for overrides in (
         {},
-        {"use_colored_lights": True},
-        {"use_colored_lights": True, "use_gradient_mode": True},
+        {"lighting_mode": "Colored Light"},
+        {"lighting_mode": "Colored Light", "mask_shape": "Directional gradient"},
     ):
         out_image = run(gray, **overrides)[0]
         assert out_image.shape == gray.shape, overrides
@@ -632,7 +736,7 @@ def test_single_channel_image_keeps_its_channel_count(run):
 
 def test_debug_image_is_rgb_for_a_single_channel_image(run):
     gray = torch.rand(1, 32, 32, 1)
-    debug = run(gray, show_debug_info=True)[2]
+    debug = run(gray, debug_output_connected=True)[2]
     assert debug.shape == (1, 32, 32, 3)
     assert debug.abs().max() > 0.0, "grayscale input used to fall through to a black debug view"
 

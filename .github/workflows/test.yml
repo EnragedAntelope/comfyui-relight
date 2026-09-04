@@ -20,6 +20,18 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: ruff check .
 
+  # The Python suite cannot open a browser, and every frontend bug this pack has
+  # shipped went out through a green Python suite. This drives the real,
+  # unmodified web/*.js against a fake LiteGraph node.
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: node --import ./tests/frontend/hooks.mjs --test tests/frontend
+
   test:
     runs-on: ubuntu-latest
     strategy:

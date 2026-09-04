@@ -38,6 +38,17 @@ def _comfy_type(name):
 
 
 class io:
+    class Hidden:
+        """The subset of ``comfy_api.latest.io.Hidden`` the schema names.
+
+        The real thing is a ``str`` Enum; ReLight only ever puts these members
+        in ``Schema(hidden=...)`` and reads ``cls.hidden.<name>`` at runtime,
+        so plain string constants model it exactly.
+        """
+
+        prompt = "PROMPT"
+        unique_id = "UNIQUE_ID"
+
     Image = _comfy_type("Image")
     Mask = _comfy_type("Mask")
     Combo = _comfy_type("Combo")
@@ -52,7 +63,10 @@ class io:
             self.outputs = kwargs.get("outputs", [])
 
     class ComfyNode:
-        pass
+        # ComfyUI attaches a HiddenHolder to the per-run class clone. Outside a
+        # running ComfyUI nothing sets it, and the node must cope with that -
+        # so the stub leaves it None rather than faking a prompt.
+        hidden = None
 
     class NodeOutput:
         def __init__(self, *args):

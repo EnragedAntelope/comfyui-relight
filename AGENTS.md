@@ -28,8 +28,10 @@ _Last verified: 2026-08-24_
 |------|---------|
 | `__init__.py` | ComfyUI custom-node entry point (registers the ReLight node) |
 | `relight.py` | The entire node: lighting engine, presets, UI widgets, image processing |
+| `web/` | Frontend JS served via `WEB_DIRECTORY`: legacy-workflow migration, debug-output tracking, widget visibility, working node recreate |
+| `scripts/dump_frontend_fixture.py` | Dumps the live schema to `tests/frontend/fixtures/schema.json` for the JS tests (`--check` gates staleness) |
 | `requirements-dev.txt` | test-only deps (numpy, Pillow, scipy, pytest, pinned ruff); the pack declares no runtime deps |
-| `tests/` | pytest suite (run in CI on Python 3.10-3.12) |
+| `tests/` | pytest suite (CI, Python 3.10-3.12) plus `tests/frontend/` (`node --test`) and `tests/fixtures/` (a verbatim v3.1.2 save) |
 | `example_workflows/` | Example ComfyUI workflows demonstrating the node |
 
 ## Build / test / run
@@ -51,6 +53,12 @@ pytest -q
 # Lint (CI runs this as a separate job so a style nit can't hide a test result)
 ruff check .
 
+# Frontend tests - drives the real web/*.js outside a browser (own CI job)
+node --import ./tests/frontend/hooks.mjs --test tests/frontend
+
+# Regenerate the fixture the frontend tests build fake nodes from
+python scripts/dump_frontend_fixture.py
+
 # Manual QA in ComfyUI after any visible change:
 # node appears, presets work, lights position correctly, mask interaction works
 ```
@@ -62,10 +70,11 @@ ruff check .
 - **Declare no runtime dependencies.** numpy, Pillow, scipy and torch are all in ComfyUI core's own `requirements.txt` at floors at or above anything here, so `pyproject.toml` keeps `dependencies = []`. Test-only deps live in `requirements-dev.txt`, which both CI jobs install.
 - Works best with high-quality foreground masks (e.g. from ComfyUI Essentials).
 - The node uses the ComfyUI v3 schema (`comfy_api`, `v0_0_2` with a `latest` fallback).
-- Widget inputs are stored *positionally* in saved workflows. Appending is safe; inserting, removing or reordering silently corrupts every workflow in the wild. `test_saved_workflow_widget_order_is_stable` pins the order.
+- Widget inputs are stored *positionally* in saved workflows, but the order is **no longer frozen**. What keeps pre-v4 files loading is `web/relight_migrate.js`, which remaps them by name. So: any schema change - add, remove, rename, reorder - must be paired with a check that the migration still maps correctly, and the legacy order pinned in `tests/test_relight.py` (`LEGACY_WIDGET_ORDER`) must keep matching the JS constant. Get the migration wrong and every saved workflow loads plausible garbage with no error, which is worse than a crash.
 - A preset overrides whatever widgets it names — except `effect_strength`, which it scales (see `ReLight.STRENGTH_KEY`), and the `GEOMETRY_KEYS` when `preserve_positioning` is on.
 - Presets are defined as dicts at the top of `relight.py` — easy to extend.
-- `use_colored_lights` and the `inner_*`/`outer_*` correction values are **mutually exclusive** in the engine. Three presets ("Warm Sunset Glow", "Cool Blue Moonlight", "Rim Light (Behind)") set colored light *and* a full correction block, so 12 of their values are inert as shipped. Rendering both halves was measured on a real image and moves the mean by ~1/255 — merging the modes is a taste change with output drift, not a bug fix.
+- `lighting_mode` is two independent switches underneath (`apply_colored`, `apply_correction`); `Both` runs the colour pass and then grades the result. Pre-v4 this was one boolean and the two were mutually exclusive, which left 12 values inert in three presets.
+- **The debug view has no toggle.** Connecting the `debug_image` output is the whole gesture. `debug_output_connected` is a hidden boolean input that `web/relight_debug.js` writes; it exists only because ComfyUI's cache key is built from a node's *inputs*, so without it, wiring an *output* would replay the cached placeholder. Never surface it as a control.
 - Never return an all-black image as an "empty" result. A wired preview makes it look like the node crashed; say why the frame is empty (`_blank_debug_image(image, reason)`).
 - **Never store per-run state on the class.** ComfyUI does not call `execute` on `ReLight`; it calls it on a *locked clone* (`ReLightClone`) whose metaclass raises `AttributeError` on any class-attribute write, and whose instances reject `__setattr__` too. `cls._coord_cache = ...` shipped in v3.0.0 and crashed every single run until v3.1.1. Caches belong at module level (`_COORD_CACHE`).
 - The `node` fixture in `tests/conftest.py` hands tests that same locked clone, mirroring `comfy_api.internal.lock_class`, so this class of bug fails in CI. Do not "simplify" it back to the bare class — the bare class is not what ComfyUI runs.

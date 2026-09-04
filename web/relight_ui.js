@@ -1,5 +1,5 @@
 import { app } from "../../scripts/app.js";
-import { GEOMETRY_KEYS, PRESET_KEYS, STRENGTH_KEY } from "./relight_presets.js";
+import { GEOMETRY_KEYS, PRESET_KEYS, PRESET_VALUES, STRENGTH_KEY } from "./relight_presets.js";
 
 /*
  * ReLight: show only the controls that are doing something.
@@ -19,10 +19,10 @@ import { GEOMETRY_KEYS, PRESET_KEYS, STRENGTH_KEY } from "./relight_presets.js";
  *
  *   GREY OUT what a preset has taken over. `disabled = true` leaves the widget
  *   in place at its full height, so picking a preset does not reshuffle the
- *   node - and the value stays readable, which matters, because seeing what
- *   "Spotlight" actually sets is how you learn to build your own.
+ *   node - and the preset's value stays readable, which matters, because seeing
+ *   what "Spotlight" actually sets is how you learn to build your own.
  *
- * Two mechanics, both learned the hard way and both non-obvious:
+ * Three mechanics, all learned the hard way and all non-obvious:
  *
  *   Hiding needs `widget.type` swapped AND `widget.hidden = true`. Older
  *   LiteGraph skips widget types it does not know; newer frontends honour
@@ -34,6 +34,14 @@ import { GEOMETRY_KEYS, PRESET_KEYS, STRENGTH_KEY } from "./relight_presets.js";
  *   so the "saved" value is `undefined`; assigning it back leaves the zero-size
  *   stub in place and the widget never comes back. That is the single most
  *   likely cause of "hiding works but showing does not".
+ *
+ *   A greyed widget cannot show its own value. The frontend's `_displayValue`
+ *   getter returns "" for anything with `computedDisabled` set, so `disabled`
+ *   on its own leaves an empty bar with a dim label and no number - the
+ *   opposite of "you can still read what the preset set". The label does still
+ *   paint, so the value goes there instead. It is deliberately the *preset's*
+ *   value and not the widget's: the widget still holds whatever the user last
+ *   set, which is precisely the number the preset is ignoring.
  *
  * Changes are detected on both paths - the widget's own callback for an
  * immediate response, and a re-check on the draw loop, which is what catches a
@@ -134,6 +142,57 @@ export function widgetsToHide(values) {
     return hidden;
 }
 
+/** Separates a widget's name from the preset value in a greyed-out label. */
+const PRESET_LABEL_MARK = "  →  ";
+
+/**
+ * How a preset's value reads in a greyed widget's label.
+ *
+ * Numbers go through `String`, which drops JSON's trailing ".0" so an integer
+ * preset value reads as `50` rather than `50.0`. Anything else (a combo's
+ * string, a boolean) prints as itself.
+ */
+export function presetLabel(name, value) {
+    return `${name}${PRESET_LABEL_MARK}${String(value)}`;
+}
+
+/** Is this label one ReLight wrote for a preset, rather than the user's own? */
+function isPresetLabel(widget) {
+    return typeof widget.label === "string" && widget.label.startsWith(widget.name + PRESET_LABEL_MARK);
+}
+
+/**
+ * Grey a widget out, putting the preset's value where its own value would be.
+ *
+ * The original label is stashed rather than assumed absent: a future frontend
+ * that ships display names would otherwise lose them on the first preset.
+ */
+function disableWidget(widget, presetValue) {
+    const label = presetValue === undefined ? widget.name : presetLabel(widget.name, presetValue);
+    if (widget.disabled === true && widget.label === label) return false;
+    if (!("__relightLabel" in widget)) widget.__relightLabel = widget.label;
+    widget.disabled = true;
+    widget.label = label;
+    return true;
+}
+
+function enableWidget(widget) {
+    const stale = isPresetLabel(widget);
+    if (!widget.disabled && !("__relightLabel" in widget) && !stale) return false;
+    widget.disabled = false;
+    if ("__relightLabel" in widget) {
+        widget.label = widget.__relightLabel;
+        delete widget.__relightLabel;
+    } else if (stale) {
+        // Self-heal: a preset label with no stash behind it means the widget
+        // arrived carrying one - a workflow saved mid-edit, an undo that
+        // restored the label but not our bookkeeping. Either way it is ours to
+        // clear, and leaving it would show a preset's value on a live control.
+        widget.label = undefined;
+    }
+    return true;
+}
+
 /**
  * Which widgets the selected preset has taken control of.
  *
@@ -198,15 +257,15 @@ export function applyVisibility(node, { resize = true } = {}) {
     const disabled = widgetsToDisable(values);
     let changed = false;
 
+    const presetValues = PRESET_VALUES[values.preset] ?? {};
+
     for (const widget of node.widgets ?? []) {
         const name = widget?.name;
         if (!name) continue;
         changed = (hidden.has(name) ? hideWidget(widget) : showWidget(widget)) || changed;
-        const shouldDisable = disabled.has(name);
-        if (Boolean(widget.disabled) !== shouldDisable) {
-            widget.disabled = shouldDisable;
-            changed = true;
-        }
+        changed = (disabled.has(name)
+            ? disableWidget(widget, presetValues[name])
+            : enableWidget(widget)) || changed;
     }
 
     if (changed && resize) fitNode(node);

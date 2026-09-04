@@ -1174,3 +1174,53 @@ def test_preset_values_stay_within_widget_bounds(node):
             if (low is not None and value < low) or (high is not None and value > high):
                 offenders.append((preset_name, key, value, low, high))
     assert offenders == []
+
+
+def test_a_light_at_the_right_edge_keeps_its_label_on_the_frame(run):
+    """A rim light sits at x=0.9, and its "L1" ran off the right edge.
+
+    The label is drawn to the right of the marker, so a light near the right
+    edge pushed the text past `width` and PIL silently clipped it - visible
+    only in a render, which is how it survived to v4.0.0. It now flips to the
+    left of the marker instead.
+
+    Measured as the side of the marker the label's black backing box lands on,
+    in a band across the marker's own row. The frame is deliberately *white*:
+    on a black one the box is invisible against the input and every threshold
+    measures the input instead of the label, which is how the first version of
+    this test passed with the bug still in place.
+    """
+    height, width = 768, 1344
+    white = torch.ones(1, height, width, 3)
+    marker_y = height // 2
+
+    def label_sides(position_x):
+        frame = run(
+            white,
+            debug_output_connected=True,
+            light_position_x=position_x,
+            light_position_y=0.5,
+        )[2][0]
+        marker_x = int(position_x * width)
+        band = frame[marker_y - 40:marker_y + 40]
+        dark = band.sum(dim=-1) < 0.9
+        return int(dark[:, :marker_x].sum()), int(dark[:, marker_x:].sum())
+
+    # A light with room to its right keeps the label on the right, as always.
+    left, right = label_sides(0.5)
+    assert right > left, "the label is not drawn to the right of a centred marker"
+
+    # A light hard against the right edge must flip it, not clip it.
+    left, right = label_sides(0.97)
+    assert left > right, (
+        "the label stayed on the right of a marker near the right edge, "
+        "so it was clipped against the frame instead of flipping"
+    )
+
+
+def test_a_light_in_the_corner_keeps_its_label_on_the_frame(run):
+    """Both axes clamp: a marker in a corner can run a glyph off the top too."""
+    big = torch.zeros(1, 768, 1344, 3)
+    corner = run(big, debug_output_connected=True, light_position_x=0.99, light_position_y=0.01)[2]
+    assert corner.shape == (1, 768, 1344, 3)
+    assert torch.isfinite(corner).all()

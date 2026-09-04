@@ -751,7 +751,19 @@ class ReLight(io.ComfyNode):
                     draw_debug.ellipse((x-inner_r_px, y-inner_r_px, x+inner_r_px, y+inner_r_px), outline=(255, 255, 0, 150), width=ring_width)
                     draw_debug.ellipse((x-outer_r_px, y-outer_r_px, x+outer_r_px, y+outer_r_px), outline=(0, 255, 255, 150), width=ring_width)
                     label = f"L{i+1}"
-                    text_pos = (x + marker_radius + ring_width * 2, y - font_size // 2 - 2)
+                    # The label sits to the right of the marker, but a light near
+                    # the right edge (a rim light at x=0.9, say) would push it off
+                    # the frame, so it flips to the left side instead. Both axes
+                    # are then clamped, because a marker in a corner can still run
+                    # a tall glyph past the top or bottom.
+                    gap = marker_radius + ring_width * 2
+                    label_w = draw_debug.textlength(label, font=font) if font else font_size
+                    text_x = x + gap
+                    if text_x + label_w > width:
+                        text_x = x - gap - label_w
+                    text_x = max(0, min(text_x, width - label_w))
+                    text_y = max(0, min(y - font_size // 2 - 2, height - font_size))
+                    text_pos = (text_x, text_y)
                     if font:
                         bbox = draw_debug.textbbox(text_pos, label, font=font)
                         draw_debug.rectangle(bbox, fill=(0, 0, 0, 180))

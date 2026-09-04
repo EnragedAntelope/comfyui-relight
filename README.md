@@ -6,10 +6,44 @@
 
 > **Relight your images without re-generating them.**
 
-ReLight is a single, self-contained ComfyUI node that adds up to 3 positionable light sources to any image — colored additive light or precise color correction, with presets, directional gradients, rim lighting, and mask-aware 3D occlusion. It's fast and deterministic: pure image processing, no diffusion pass, no models to download.
+ReLight is a single, self-contained ComfyUI node that adds up to 3 positionable light sources to any image — colored additive light, precise color correction, or both — with presets, directional gradients, rim lighting, and mask-aware 3D occlusion including a cast shadow. It's fast and deterministic: pure image processing, no diffusion pass, no models to download.
 
-**Built on the ComfyUI v3 node schema.**
-![ReLight Node Example](https://github.com/user-attachments/assets/34fa5b9f-65e6-4953-8bd4-65a349ed9455)
+![The ReLight node in a ComfyUI workflow: an image and a mask in, the relit result and the debug view out](docs/images/relight-workflow.jpg)
+
+Two coloured lights, one behind the subject: a warm key from the upper right and a cool fill from the lower left. The third output, wired to the second preview, is the debug view — it shows where each light sits and which zones it covers, and it only draws when something is connected to it.
+
+![Before, and the same frame under two presets](docs/images/before-and-after.jpg)
+
+## 🔧 Install
+
+**ComfyUI-Manager (recommended):** open the Manager, search for **ReLight**, click Install, restart ComfyUI.
+
+**Manually:**
+
+```bash
+cd path/to/ComfyUI/custom_nodes
+git clone https://github.com/EnragedAntelope/comfyui-relight
+# Restart ComfyUI - there is nothing else to install
+```
+
+**Requirements: ComfyUI 0.3.48 or newer, and nothing else.** ReLight is built on the ComfyUI v3 node schema (`comfy_api`), which first shipped in that release; on older builds the node will not load. It declares no dependencies of its own — `numpy`, `Pillow`, `scipy` and `torch` all ship with ComfyUI core, so a working ComfyUI already satisfies them.
+
+For good masks, [ComfyUI Essentials](https://github.com/cubiq/ComfyUI_essentials) is worth having alongside it — its RemBG nodes are what the bundled example workflow uses.
+
+## 🚀 Quick start
+
+1. **Add the ReLight 💡 node** (category: `image/lighting`)
+2. **Connect your image** to `image`
+3. **Connect a foreground mask** to `mask` — white = subject, black = background. Optional, but required for `subject_interaction` ("in front of" / "behind") and for `remove_background`. It is resized to the image automatically
+4. **Pick a preset** — "Rim Light (Behind)" is the one that shows off what the node does — or leave `preset` on `None` and build the light yourself
+5. **Turn `effect_strength` down or up.** It scales whatever the preset does: `1.0` is the preset as designed, `0.5` is half, `0.0` is untouched
+6. **Wire `debug_image` to a Preview Image** if you want to see where the lights actually are. There is no toggle — connecting the output is the whole gesture
+
+> **Presets override the widgets below them.** The values shown on the node are ignored for whatever the preset defines, so ReLight greys those controls out and writes the preset's own value into the label — `mask_blur → 30` — instead of leaving a number you can drag that changes nothing. Set `preset` back to `None` to tune by hand, or turn on `preserve_positioning` to keep your own light positions and radii while the preset supplies everything else. `effect_strength` is the one exception: a preset sets a baseline and this widget *scales* it, so it always stays live.
+
+### Sample workflow
+
+A ready-to-load workflow is included: [example_workflows/relight_basic.json](https://github.com/EnragedAntelope/comfyui-relight/blob/main/example_workflows/relight_basic.json). It loads an image, builds a mask with ComfyUI Essentials' RemBG nodes, runs ReLight in "Warm Sunset Glow" behind the subject, and previews both the result and the debug view.
 
 ## 🌟 Features
 
@@ -31,6 +65,22 @@ ReLight is a single, self-contained ComfyUI node that adds up to 3 positionable 
   - 🔆 **Light in front of subject** - The subject catches more light than the background
   - ✨ **Light behind subject (rim)** - A rim highlight along the subject's edge, a background glow with real falloff, and a shadow the subject casts across the background (`shadow_strength`, `shadow_length`)
 
+### A node that shows only what is live
+
+Lights 2 and 3 appear when `num_light_sources` asks for them, colour controls appear in the modes that use them, grading controls in the modes that use *those*, and the rim and shadow controls only when the light is behind the subject. The node resizes to fit, so the same node is a short panel or a tall one depending on what you actually asked it to do.
+
+![The same node in two configurations: one light in grading-only mode, and three lights in Both with the light behind the subject](docs/images/node-shows-only-live-controls.png)
+
+Anything the selected preset has taken over is greyed out rather than hidden — so picking a preset never reshuffles the node under your pointer — and the greyed label carries the preset's own value, which is how you learn what "Spotlight" is actually doing.
+
+![preset None beside preset Spotlight, whose overridden controls are greyed and labelled with the preset's values](docs/images/preset-greyed-controls.png)
+
+### Visual debugging with nothing to switch on
+
+Connect the `debug_image` output to a preview and you get a view of where every light sits and which zones it covers. Disconnect it and the node stops drawing it. There is no toggle to remember, and everything drawn scales with the frame, so it stays readable at full render resolution rather than becoming a dark rectangle in a preview thumbnail.
+
+![The debug view: a legend, the inner and outer mask zones tinted red and blue, and a labelled marker at each light's position](docs/images/debug-view.jpg)
+
 ### Production-Ready Features
 
 - **Ready-to-Use Presets** for instant professional results:
@@ -43,64 +93,7 @@ ReLight is a single, self-contained ComfyUI node that adds up to 3 positionable 
   - "Spotlight" - Focused dramatic lighting
   - "Negative Light (Darken)" - Creative darkening effects
 
-- **Visual Debugging with nothing to switch on** - Connect the `debug_image` output to a preview and you get a view of where every light sits and which zones it covers. Disconnect it and the node stops drawing it. There is no toggle to remember
-- **A node that shows only what is live** - Lights 2 and 3 appear when you ask for them, colour controls appear in the modes that use them, and anything the selected preset has taken over is greyed out where you can still read its value
 - **Fine-Tuning Controls** - Precision adjustments for blur, strength, rim amplification and shadow
-
-## 🔧 Installation
-
-### Using ComfyUI-Manager (Recommended)
-
-1. Open ComfyUI and navigate to the Manager
-2. Search for "ReLight" in the available custom nodes
-3. Click Install
-4. Restart ComfyUI
-
-### Manual Installation
-
-```bash
-# Navigate to your ComfyUI custom_nodes directory
-cd path/to/ComfyUI/custom_nodes
-
-# Clone this repository
-git clone https://github.com/EnragedAntelope/comfyui-relight
-
-# Restart ComfyUI - there is nothing else to install
-```
-
-### Requirements
-
-**ComfyUI 0.3.48 or newer.** ReLight is built on the ComfyUI v3 node schema (`comfy_api`), which first shipped in that release. On older builds the node will not load.
-
-ReLight declares no dependencies of its own. It needs `numpy`, `Pillow`, `scipy` and `torch` — all four ship with ComfyUI core, so a working ComfyUI already satisfies them.
-
-ReLight works best with high-quality foreground masks. We recommend installing:
-
-- **[ComfyUI Essentials](https://github.com/cubiq/ComfyUI_essentials)** - Provides enhanced mask generation and background removal tools
-
-## 🚀 Quick Start Guide
-
-1. **Add the ReLight 💡 node** to your workflow (found under category "image/lighting")
-2. **Connect your source image**
-3. **Connect a foreground mask** (white = subject, black = background) — optional, but required for occlusion ("Behind Subject" / "In Front of Subject") and for `remove_background` compositing. It is resized automatically if it does not match the image
-4. **Select a preset** like "Rim Light (Behind)" or design your own lighting
-5. **Adjust settings** to taste
-6. **Preview your results** in real-time
-
-> **Note on presets:** a preset overrides the widgets below it. The values shown on the node are ignored for whatever the preset defines, so don't be surprised when editing `inner_brightness` does nothing while a preset is active. Set `preset` back to `None` to tune by hand, or turn on `preserve_positioning` to keep your own light positions and radii while the preset supplies everything else. The one exception is `effect_strength`: it *scales* the preset rather than being replaced by it, so `1.0` is the preset as designed, `0.5` is half-strength and `0.0` is untouched.
-
-### Sample Workflow
-
-A ready-to-load workflow is included: [example_workflows/relight_basic.json](https://github.com/EnragedAntelope/comfyui-relight/blob/main/example_workflows/relight_basic.json)
-
-The repository includes a sample workflow that demonstrates:
-
-1. Loading an image
-2. Removing the background using ComfyUI Essentials' RemBG nodes
-3. Applying the ReLight node with "Warm Sunset Glow" preset in "Behind Subject" mode
-4. Viewing the results through both standard preview and debug visualization
-
-Simply load this workflow in ComfyUI to see ReLight in action!
 
 ## 📸 Examples
 
@@ -251,7 +244,7 @@ Simulate soft moonlight streaming through a window:
 - **mask** (optional): Foreground mask (white=subject, black=background). Needed for `subject_interaction` and for `remove_background`. Resized to the image automatically
 
 ### Preset
-- **preset**: Pre-configured starting points. A preset overrides the widgets it names, and those widgets are greyed out on the node so you can see what it set without being able to fight it
+- **preset**: Pre-configured starting points. A preset overrides the widgets it names, and those widgets are greyed out on the node and relabelled with the preset's own value (`mask_blur → 30`), so you can read what it set without being able to fight it. The label goes back to the plain widget name the moment the preset is cleared
 - **preserve_positioning**: Keep your own light positions and radii when a preset is selected, instead of letting the preset set them. Off by default, so presets apply as designed. Turning it on hands the geometry widgets back
 
 ### Mode
@@ -319,7 +312,8 @@ ruff check .
   - **Fixed: the debug view was invisible at real resolutions.** v3.1.2 replaced the black `debug_image` frame with a placeholder, then drew it at 13px on a full-resolution canvas — 1.7% of the height of a 768px render, which inside a preview thumbnail is a dark rectangle. Everything drawn on the debug view now scales with the frame, with a visible border, so it reads as a panel rather than a dead output. The same applies to the real debug view's legend, labels and light markers
   - **The debug view has no toggle any more.** Connect `debug_image` to a preview and it draws; disconnect it and it stops. `show_debug_info` is gone
   - **Fixed: "Fix node (recreate)" duplicated the node.** That menu entry comes from ComfyUI-Manager, whose implementation passes a string node id to `connect()` and throws part-way through, leaving both the original and its replacement on the canvas. ReLight now ships its own correct version and takes the broken entry out of its own nodes' menus (upstream: Comfy-Org/ComfyUI-Manager#3126)
-  - **The node now shows only the controls that are doing something.** Lights 2 and 3 appear when `num_light_sources` asks for them, colour controls appear in the modes that use them, grading controls in the modes that use *those*, and rim/shadow controls only when the light is behind the subject. Anything the selected preset has taken over is greyed out rather than hidden, so you can still read what it set. The node resizes to fit
+  - **The node now shows only the controls that are doing something.** Lights 2 and 3 appear when `num_light_sources` asks for them, colour controls appear in the modes that use them, grading controls in the modes that use *those*, and rim/shadow controls only when the light is behind the subject. Anything the selected preset has taken over is greyed out rather than hidden, and carries the preset's own value in its label — `mask_blur → 30` — because the ComfyUI frontend blanks the displayed value of any disabled widget, so greying alone would have left a row of empty bars. The node resizes to fit
+  - **Fixed: a light near the right edge lost its debug label.** The `L1`/`L2` marker labels are drawn to the right of the marker, so a light at `light_position_x` 0.9 — which is where "Warm Sunset Glow" puts one — pushed the text off the frame and it was silently clipped. The label now flips to the left of the marker when there is no room on the right
   - **Renamed and merged controls.** `use_colored_lights` → `lighting_mode`; `use_gradient_mode` → `mask_shape`; `apply_3d_lighting` + `light_direction` → `subject_interaction` (the master switch existed only to force "No Occlusion", so it collapsed into the choice it was gating); `show_debug_info` → removed. New: `shadow_strength`, `shadow_length`
   - **Packaging: ReLight declares no dependencies.** `requirements.txt` is gone. numpy, Pillow, scipy and torch all ship with ComfyUI core at versions at or above anything this node needs, so declaring them again could only ever pull a different version into a working install. Manual installation is now a `git clone` and a restart
 

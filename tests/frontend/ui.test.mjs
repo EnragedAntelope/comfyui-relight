@@ -10,10 +10,11 @@ import test from "node:test";
 
 import {
     applyVisibility,
+    presetLabel,
     widgetsToDisable,
     widgetsToHide,
 } from "../../web/relight_ui.js";
-import { PRESET_KEYS } from "../../web/relight_presets.js";
+import { PRESET_KEYS, PRESET_VALUES } from "../../web/relight_presets.js";
 import { app, getExtension } from "./stubs/app.js";
 import { makeNode, schema } from "./fake_node.mjs";
 
@@ -205,4 +206,124 @@ test("nodes from other packs are left alone", async () => {
     const before = node.onDrawForeground;
     await extension.nodeCreated(node, app);
     assert.equal(node.onDrawForeground, before);
+});
+
+/*
+ * A greyed widget cannot show its own value: the ComfyUI frontend's
+ * `_displayValue` getter returns "" for anything with `computedDisabled` set,
+ * so `disabled = true` on its own paints an empty bar. These pin the label
+ * carrying the preset's value instead - the whole point of greying rather than
+ * hiding is that you can read what the preset did.
+ */
+
+test("a greyed widget shows the preset's value in its label", () => {
+    const node = makeNode({ preset: "Spotlight" });
+    applyVisibility(node);
+    const blur = widget(node, "mask_blur");
+    assert.equal(blur.disabled, true);
+    assert.equal(blur.label, presetLabel("mask_blur", PRESET_VALUES["Spotlight"].mask_blur));
+    assert.ok(blur.label.includes(String(PRESET_VALUES["Spotlight"].mask_blur)));
+});
+
+test("the label carries the preset's value, not the widget's own", () => {
+    // The widget still holds whatever the user last set - which is exactly the
+    // number the preset is ignoring, so showing it would be a lie.
+    const node = makeNode({ preset: "Spotlight" });
+    const blur = widget(node, "mask_blur");
+    blur.value = 999;
+    applyVisibility(node);
+    assert.equal(blur.label.includes("999"), false, "the label showed the ignored widget value");
+    assert.ok(blur.label.includes(String(PRESET_VALUES["Spotlight"].mask_blur)));
+});
+
+test("clearing the preset restores the original label", () => {
+    const node = makeNode({ preset: "Spotlight" });
+    const blur = widget(node, "mask_blur");
+    const original = blur.label;
+    applyVisibility(node);
+    assert.notEqual(blur.label, original);
+
+    widget(node, "preset").value = "None";
+    applyVisibility(node);
+    assert.equal(blur.disabled, false);
+    assert.equal(blur.label, original, "the label was not restored when the preset was cleared");
+});
+
+test("preserve_positioning hands back the label as well as the control", () => {
+    const node = makeNode({ preset: "Spotlight" });
+    applyVisibility(node);
+    const x = widget(node, "light_position_x");
+    assert.equal(x.disabled, true);
+
+    widget(node, "preserve_positioning").value = true;
+    applyVisibility(node);
+    assert.equal(x.disabled, false);
+    assert.equal(x.label, undefined, "a geometry widget kept its preset label");
+});
+
+test("effect_strength is never relabelled - a preset scales it, not replaces it", () => {
+    const node = makeNode({ preset: "Spotlight" });
+    applyVisibility(node);
+    const strength = widget(node, "effect_strength");
+    assert.ok(!strength.disabled);
+    assert.equal(strength.label, undefined);
+});
+
+test("a preset is a steady state too", () => {
+    // Relabelling must be idempotent, or the draw loop marks the canvas dirty
+    // on every frame for as long as a preset is selected.
+    const node = makeNode({ preset: "Spotlight" });
+    applyVisibility(node);
+    assert.equal(applyVisibility(node), false);
+});
+
+test("every preset value survives the round trip into a label", () => {
+    for (const [name, keys] of Object.entries(PRESET_KEYS)) {
+        const node = makeNode({ preset: name });
+        applyVisibility(node);
+        for (const key of keys) {
+            if (key === "effect_strength") continue;
+            const w = widget(node, key);
+            assert.ok(w, `${name} names a widget that does not exist: ${key}`);
+            assert.equal(
+                w.label,
+                presetLabel(key, PRESET_VALUES[name][key]),
+                `${name}.${key} did not get a labelled value`
+            );
+        }
+    }
+});
+
+test("a stale preset label is cleared even with no bookkeeping behind it", () => {
+    // A workflow saved mid-edit, or an undo that restores the label but not our
+    // stash, must not leave a preset's value showing on a live control.
+    const node = makeNode({ preset: "None" });
+    const blur = widget(node, "mask_blur");
+    blur.label = presetLabel("mask_blur", 30);
+    assert.equal(applyVisibility(node), true, "the stale label did not register as a change");
+    assert.equal(blur.label, undefined);
+});
+
+test("a label the user set themselves is left alone", () => {
+    // Only labels shaped like ours are ours to clear.
+    const node = makeNode({ preset: "None" });
+    const blur = widget(node, "mask_blur");
+    blur.label = "Softness";
+    applyVisibility(node);
+    assert.equal(blur.label, "Softness");
+});
+
+test("a user label survives a preset being applied and cleared", () => {
+    const node = makeNode({ preset: "None" });
+    const blur = widget(node, "mask_blur");
+    blur.label = "Softness";
+    applyVisibility(node);
+
+    widget(node, "preset").value = "Spotlight";
+    applyVisibility(node);
+    assert.equal(blur.label, presetLabel("mask_blur", PRESET_VALUES["Spotlight"].mask_blur));
+
+    widget(node, "preset").value = "None";
+    applyVisibility(node);
+    assert.equal(blur.label, "Softness", "the user's own label was not restored");
 });

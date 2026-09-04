@@ -35,6 +35,16 @@ const defaults = collectDefaults(nodeData);
 /** The legacy array as a name -> value map, for asserting against. */
 const legacy = Object.fromEntries(LEGACY_ORDER.map((name, i) => [name, legacyValues[i]]));
 
+test("defaults are read out of the real /object_info shape", () => {
+    // The server sends a combo as ["COMBO", {options, default}]. Reading the
+    // default out of the wrong element would silently reset every new widget
+    // to undefined during a migration.
+    assert.equal(defaults.lighting_mode, "Color Correction");
+    assert.equal(defaults.subject_interaction, "None");
+    assert.equal(defaults.debug_output_connected, false);
+    assert.equal(typeof defaults.shadow_strength, "number");
+});
+
 test("the shipped v3.1.2 workflow is recognised as legacy", () => {
     assert.equal(legacyValues.length, 48);
     assert.equal(looksLegacy(legacyValues), true);

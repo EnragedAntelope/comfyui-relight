@@ -18,14 +18,20 @@ export const schema = JSON.parse(
     fs.readFileSync(path.join(HERE, "fixtures", "schema.json"), "utf8")
 );
 
-/** `nodeData` in the shape `beforeRegisterNodeDef` receives it. */
+/**
+ * `nodeData` in the shape `beforeRegisterNodeDef` receives it.
+ *
+ * Verified against what this ComfyUI build actually serves at /object_info: a
+ * combo arrives as `["COMBO", {options: [...], default: ...}]`, NOT as the
+ * older `[[...options], {...}]`. A fake that emitted the old shape would let a
+ * `collectDefaults` that only understood the old shape pass here and fail live.
+ */
 export function makeNodeData() {
     const required = {};
     for (const widget of schema.widgets) {
-        const options = { default: widget.default };
         required[widget.name] = widget.options
-            ? [widget.options, options]
-            : ["FLOAT", options];
+            ? ["COMBO", { default: widget.default, options: [...widget.options], multiselect: false }]
+            : [typeof widget.default === "boolean" ? "BOOLEAN" : "FLOAT", { default: widget.default }];
     }
     return { name: schema.node_class, input: { required } };
 }

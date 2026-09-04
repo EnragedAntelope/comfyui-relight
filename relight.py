@@ -80,6 +80,31 @@ def _wrap_debug_text(draw, text, font, max_width):
     return lines
 
 
+def _debug_font_size(height):
+    """Type size for the debug overlays, as a fraction of the frame height.
+
+    Fixed 13px type is legible on the 96x64 fixture the tests used and invisible
+    on a real 1300px render - 1.7% of the height, which inside a ComfyUI preview
+    thumbnail is a dark rectangle. That is exactly how the v3.1.2 placeholder
+    shipped "working" and was reported as a black frame. Scale with the frame,
+    with a floor so small images stay readable and a cap so a 4K render does not
+    get billboard type.
+    """
+    return int(min(64, max(13, round(height * 0.035))))
+
+
+def _load_debug_font(size):
+    """The default font at `size`, falling back through older Pillow APIs."""
+    try:
+        return ImageFont.load_default(size=size)
+    except Exception:
+        try:
+            return ImageFont.load_default()
+        except Exception as err:  # pragma: no cover - no usable font at all
+            logger.debug(f"  Could not load a default font: {err}")
+            return None
+
+
 def _adv(**kwargs):
     """Pass input kwargs through, dropping `advanced` where unsupported."""
     if not _ADVANCED_SUPPORTED:
@@ -630,27 +655,23 @@ class ReLight(io.ComfyNode):
 
             # --- Draw Indicators & Legend ---
             draw_debug = ImageDraw.Draw(debug_img)
-            font = None
-            font_size = 10
-            try:
-                font = ImageFont.load_default(size=12)
-                font_size = 12
-            except Exception:
-                try:
-                    font = ImageFont.load_default()
-                except Exception as font_err:
-                    logger.debug(f"  Could not load default font: {font_err}")
+            # Same scaling rule as the placeholder: at 1344x768 the old fixed
+            # 12px legend and 5px dots were unreadable in a preview thumbnail.
+            font_size = _debug_font_size(height)
+            font = _load_debug_font(font_size)
+            marker_radius = max(4, font_size // 2)
+            ring_width = max(1, font_size // 8)
             for i, light in enumerate(light_sources):
                 try:
                     x, y = int(light["position_x"] * width), int(light["position_y"] * height)
                     color = tuple(light.get("color", [255, 255, 255])) + (220,)
                     inner_r_px = int(light["inner_radius"] * min(width, height))
                     outer_r_px = int(light["outer_radius"] * min(width, height))
-                    draw_debug.ellipse((x-5, y-5, x+5, y+5), fill=color, outline=(0, 0, 0, 200))
-                    draw_debug.ellipse((x-inner_r_px, y-inner_r_px, x+inner_r_px, y+inner_r_px), outline=(255, 255, 0, 150), width=1)
-                    draw_debug.ellipse((x-outer_r_px, y-outer_r_px, x+outer_r_px, y+outer_r_px), outline=(0, 255, 255, 150), width=1)
+                    draw_debug.ellipse((x-marker_radius, y-marker_radius, x+marker_radius, y+marker_radius), fill=color, outline=(0, 0, 0, 200), width=ring_width)
+                    draw_debug.ellipse((x-inner_r_px, y-inner_r_px, x+inner_r_px, y+inner_r_px), outline=(255, 255, 0, 150), width=ring_width)
+                    draw_debug.ellipse((x-outer_r_px, y-outer_r_px, x+outer_r_px, y+outer_r_px), outline=(0, 255, 255, 150), width=ring_width)
                     label = f"L{i+1}"
-                    text_pos = (x + 10, y - font_size // 2 - 2)
+                    text_pos = (x + marker_radius + ring_width * 2, y - font_size // 2 - 2)
                     if font:
                         bbox = draw_debug.textbbox(text_pos, label, font=font)
                         draw_debug.rectangle(bbox, fill=(0, 0, 0, 180))
@@ -663,20 +684,27 @@ class ReLight(io.ComfyNode):
                 legend_items = [("Inner Mask Area", (255, 0, 0, 128)), ("Outer Mask Area (Ring)", (0, 0, 255, 128))]
                 if fg_mask_tensor is not None:
                     legend_items.append(("Foreground Mask", (0, 255, 0, 100)))
-                legend_x, legend_y = 10, 10
-                line_height = font_size + 6
+                pad = max(5, font_size // 2)
+                swatch = font_size
+                legend_x = legend_y = pad * 2
+                line_height = int(font_size * 1.5)
                 max_width = 0
                 for text, _ in legend_items:
                     try:
-                        text_w = draw_debug.textlength(text, font=font) if font else len(text) * 7
+                        text_w = draw_debug.textlength(text, font=font) if font else len(text) * font_size * 0.55
                     except Exception:
-                        text_w = len(text) * 7
+                        text_w = len(text) * font_size * 0.55
                     max_width = max(max_width, text_w)
-                legend_box = (legend_x - 5, legend_y - 5, legend_x + max_width + 25, legend_y + len(legend_items) * line_height)
+                legend_box = (
+                    legend_x - pad,
+                    legend_y - pad,
+                    legend_x + swatch + pad + max_width + pad,
+                    legend_y + len(legend_items) * line_height,
+                )
                 draw_debug.rectangle(legend_box, fill=(0, 0, 0, 190))
                 for text, color in legend_items:
-                    draw_debug.rectangle((legend_x, legend_y, legend_x + 12, legend_y + 12), fill=color)
-                    draw_debug.text((legend_x + 18, legend_y + 1), text, fill=(255, 255, 255, 220), font=font)
+                    draw_debug.rectangle((legend_x, legend_y, legend_x + swatch, legend_y + swatch), fill=color)
+                    draw_debug.text((legend_x + swatch + pad, legend_y), text, fill=(255, 255, 255, 220), font=font)
                     legend_y += line_height
             except Exception:
                 logger.exception("  ERROR drawing legend")
@@ -697,9 +725,15 @@ class ReLight(io.ComfyNode):
 
         A solid black frame is indistinguishable from a crash: users wire the
         debug output to a preview, see black, and reasonably conclude the node
-        failed. So the placeholder states why it is empty and names the widget
-        that fills it. Falls back to plain black only if the text cannot be
-        drawn (no font, or an image too small to hold a line of type).
+        failed. So the placeholder states why it is empty and how to fill it.
+
+        Everything here scales with the frame. v3.1.2 drew 13px type on a
+        full-resolution canvas, which is legible at 96x64 and invisible at 1344
+        wide, so the placeholder was reported as the very black frame it was
+        written to replace. The inset border is the other half of that: it means
+        even an unreadable thumbnail is visibly a deliberate panel rather than a
+        dead output. Falls back to plain black only if the text cannot be drawn
+        (no font, or an image too small to hold a line of type).
         """
         height, width = image.shape[1], image.shape[2]
         blank = torch.zeros((1, height, width, 3), device=image.device, dtype=torch.float32)
@@ -708,25 +742,78 @@ class ReLight(io.ComfyNode):
         try:
             canvas = Image.new("RGB", (width, height), (24, 24, 28))
             draw = ImageDraw.Draw(canvas)
-            try:
-                font = ImageFont.load_default(size=13)
-            except Exception:
-                font = ImageFont.load_default()
-            lines = _wrap_debug_text(draw, reason, font, width - 24)
-            line_height = 17
-            y = max(8, (height - line_height * len(lines)) // 2)
+            font_size = _debug_font_size(height)
+            font = _load_debug_font(font_size)
+
+            border = max(2, font_size // 6)
+            inset = max(4, font_size // 2)
+            draw.rectangle(
+                (inset, inset, width - 1 - inset, height - 1 - inset),
+                outline=(96, 96, 112),
+                width=border,
+            )
+
+            margin = inset + border + font_size
+            lines = _wrap_debug_text(draw, reason, font, max(font_size, width - 2 * margin))
+            line_height = int(font_size * 1.4)
+            y = max(margin, (height - line_height * len(lines)) // 2)
             for line in lines:
                 try:
                     text_width = draw.textlength(line, font=font)
                 except Exception:
-                    text_width = len(line) * 7
-                draw.text((max(8, (width - text_width) // 2), y), line, fill=(190, 190, 200), font=font)
+                    text_width = len(line) * font_size * 0.55
+                draw.text(
+                    (max(margin, int((width - text_width) // 2)), y),
+                    line,
+                    fill=(198, 198, 210),
+                    font=font,
+                )
                 y += line_height
             placeholder = np.array(canvas).astype(np.float32) / 255.0
             return torch.from_numpy(placeholder).unsqueeze(0).to(image.device)
         except Exception:
             logger.debug("Could not render the debug placeholder text; using a black frame.")
             return blank
+
+    #: Output slot the debug view is on. A downstream node consuming it appears
+    #: in the submitted prompt as the pair ``[<this node's id>, 2]``.
+    DEBUG_OUTPUT_SLOT = 2
+
+    @classmethod
+    def _debug_output_is_consumed(cls):
+        """Does the submitted prompt wire anything to this node's debug output?
+
+        The node's own `debug_output_connected` widget is what makes the UI feel
+        immediate (see web/relight_debug.js - a widget value is what ComfyUI
+        hashes to decide a node must re-run). This is the independent check for
+        everything that never loads that file: an API caller posting to /prompt,
+        or a UI where the frontend extension failed to load. Either signal is
+        enough; neither is required.
+
+        Deliberately total: hidden inputs are absent outside a running ComfyUI
+        and empty in some internal calls, so every failure here means "no", not
+        an exception on a path the user never asked about.
+        """
+        hidden = getattr(cls, "hidden", None)
+        prompt = getattr(hidden, "prompt", None)
+        unique_id = getattr(hidden, "unique_id", None)
+        if not prompt or unique_id is None:
+            return False
+        wanted = str(unique_id)
+        try:
+            for node in prompt.values():
+                for value in (node.get("inputs") or {}).values():
+                    if (
+                        isinstance(value, (list, tuple))
+                        and len(value) == 2
+                        and str(value[0]) == wanted
+                        and value[1] == cls.DEBUG_OUTPUT_SLOT
+                    ):
+                        return True
+        except (AttributeError, TypeError):
+            # A prompt shape we do not recognise is not worth crashing a render.
+            logger.debug("ReLight: could not read the prompt to check debug connectivity.")
+        return False
 
     # --- Mask preparation ---
 
@@ -811,7 +898,7 @@ class ReLight(io.ComfyNode):
         subject_interaction = params.get('subject_interaction', cls.SUBJECT_NONE)
         lighting_mode = params.get('lighting_mode', cls.MODE_CORRECTION)
         mask_shape = params.get('mask_shape', cls.SHAPE_RADIAL)
-        debug_output_connected = bool(params.get('debug_output_connected', False))
+        debug_output_connected = bool(params.get('debug_output_connected', False)) or cls._debug_output_is_consumed()
         effect_strength = params.get('effect_strength', 1.0)
         rim_amplification = params.get('rim_amplification', 2.0)
         num_light_sources = params.get('num_light_sources', 1)

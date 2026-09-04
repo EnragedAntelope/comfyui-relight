@@ -58,6 +58,18 @@ function hideWidget(node, widget) {
     widget.computeSize = () => [0, -4];
 }
 
+/**
+ * Run `fn` once the current frame has settled.
+ *
+ * `requestAnimationFrame` is a browser global, so it is absent under
+ * `node --test` - and a bare call there throws a ReferenceError that takes the
+ * rest of `nodeCreated` with it. Fall back to a macrotask.
+ */
+function deferToNextFrame(fn) {
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(fn);
+    else setTimeout(fn, 0);
+}
+
 /** Does the debug output have at least one link? */
 function debugOutputIsConnected(node) {
     const output = (node.outputs ?? []).find((slot) => slot.name === DEBUG_OUTPUT);
@@ -113,7 +125,7 @@ app.registerExtension({
             // Connections are restored after nodeCreated when a workflow loads,
             // and onConnectionsChange is not always called for those, so take
             // one reading once the graph has settled.
-            requestAnimationFrame(() => {
+            deferToNextFrame(() => {
                 try {
                     syncDebugFlag(node);
                 } catch (error) {

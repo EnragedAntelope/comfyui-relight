@@ -616,6 +616,118 @@ def test_debug_placeholder_falls_back_to_black_when_too_small(run):
     assert float(debug.max()) == 0.0
 
 
+#: The colour ``_blank_debug_image`` paints its ground with.
+PLACEHOLDER_GROUND = torch.tensor([24 / 255, 24 / 255, 28 / 255])
+
+
+def _ink_fraction(frame, inset=0):
+    """Fraction of pixels that differ from the placeholder's flat ground.
+
+    Text coverage, not `max() > 0`. The v3.1.2 placeholder drew 13px type on a
+    full-resolution canvas: it passed every brightness assertion and was
+    invisible in a preview, which is how it was reported as a black frame.
+    """
+    region = frame[inset:frame.shape[0] - inset, inset:frame.shape[1] - inset] if inset else frame
+    return float(((region - PLACEHOLDER_GROUND).abs().sum(-1) > 0.15).float().mean())
+
+
+def test_debug_placeholder_is_legible_at_a_realistic_resolution(run):
+    """Measured inside the border at 1344x768, the size people render at.
+
+    Whole-frame ink is not the measurement to make: the border alone can carry
+    it past a threshold while the type stays invisible, which is how the v3.1.2
+    placeholder passed its own tests. This looks only where the text is.
+    v3.1.2 scores 0.0027 here; this build scores 0.015.
+    """
+    big = torch.zeros(1, 768, 1344, 3)
+    debug = run(big, debug_output_connected=False)[2][0]
+    assert _ink_fraction(debug, inset=48) > 0.008, "the placeholder text is not legible"
+
+
+def test_debug_placeholder_still_reads_as_a_panel_in_a_thumbnail(run):
+    """The reported symptom was a black rectangle in a ComfyUI preview.
+
+    A preview is a thumbnail, so that is what is measured: downscale the
+    placeholder the way the UI does and check something is still drawn on it.
+    v3.1.2 scores 0.010 here; this build scores 0.059.
+    """
+    big = torch.zeros(1, 768, 1344, 3)
+    debug = run(big, debug_output_connected=False)[2]
+    thumb = torch.nn.functional.interpolate(
+        debug.permute(0, 3, 1, 2), size=(55, 96), mode="area"
+    ).permute(0, 2, 3, 1)[0]
+    assert _ink_fraction(thumb, inset=4) > 0.03, "the placeholder is a dark rectangle in a preview"
+
+
+def test_debug_view_renders_when_the_prompt_consumes_it(node_with_prompt, defaults, image):
+    """No toggle: something wired to the debug output is the whole trigger.
+
+    This is the path an API caller takes - it never loads the frontend, so
+    `debug_output_connected` is False and the prompt is the only signal.
+    """
+    prompt = {
+        "7": {"class_type": "ReLight", "inputs": {}},
+        "9": {"class_type": "PreviewImage", "inputs": {"images": ["7", 2]}},
+    }
+    node = node_with_prompt(prompt=prompt, unique_id="7")
+    debug = tuple(node.execute(image, **defaults(debug_output_connected=False)))[2]
+    off = tuple(node_with_prompt().execute(image, **defaults(debug_output_connected=False)))[2]
+    assert debug.mean() > off.mean(), "the debug view was not drawn for a wired output"
+
+
+def test_a_wire_from_another_output_does_not_trigger_the_debug_view(node_with_prompt, defaults, image):
+    """Slot 0 is the relit image; consuming it must not cost a debug render."""
+    prompt = {
+        "7": {"class_type": "ReLight", "inputs": {}},
+        "9": {"class_type": "SaveImage", "inputs": {"images": ["7", 0]}},
+    }
+    node = node_with_prompt(prompt=prompt, unique_id="7")
+    debug = tuple(node.execute(image, **defaults(debug_output_connected=False)))[2]
+    off = tuple(node_with_prompt().execute(image, **defaults(debug_output_connected=False)))[2]
+    assert torch.equal(debug, off)
+
+
+def test_another_nodes_debug_wire_does_not_trigger_ours(node_with_prompt, defaults, image):
+    """Two ReLight nodes, only one of them wired."""
+    prompt = {
+        "7": {"class_type": "ReLight", "inputs": {}},
+        "8": {"class_type": "ReLight", "inputs": {}},
+        "9": {"class_type": "PreviewImage", "inputs": {"images": ["8", 2]}},
+    }
+    node = node_with_prompt(prompt=prompt, unique_id="7")
+    debug = tuple(node.execute(image, **defaults(debug_output_connected=False)))[2]
+    off = tuple(node_with_prompt().execute(image, **defaults(debug_output_connected=False)))[2]
+    assert torch.equal(debug, off)
+
+
+def test_the_connectivity_check_tolerates_an_unusable_prompt(node_with_prompt, defaults, image):
+    """Hidden inputs are absent outside ComfyUI and empty in some internal calls.
+
+    None of these shapes may raise: a render must not fail over a question the
+    user never asked.
+    """
+    for prompt, unique_id in (
+        (None, None),
+        ({}, "7"),
+        ({"7": {}}, "7"),
+        ({"7": {"inputs": None}}, "7"),
+        ({"7": {"inputs": {"x": ["7"]}}}, "7"),
+        ("not a dict", "7"),
+        ({"7": {"class_type": "ReLight", "inputs": {}}}, None),
+    ):
+        node = node_with_prompt(prompt=prompt, unique_id=unique_id)
+        out = tuple(node.execute(image, **defaults(debug_output_connected=False)))
+        assert out[2].shape == (1, 64, 96, 3), (prompt, unique_id)
+
+
+def test_the_widget_flag_alone_still_renders_the_debug_view(node_with_prompt, defaults, image):
+    """The UI's flag and the prompt check are independent; either is enough."""
+    node = node_with_prompt()
+    on = tuple(node.execute(image, **defaults(debug_output_connected=True)))[2]
+    off = tuple(node.execute(image, **defaults(debug_output_connected=False)))[2]
+    assert on.mean() > off.mean()
+
+
 def test_debug_image_matches_image_dimensions(run, image):
     debug = run(image, debug_output_connected=True)[2]
     assert debug.shape == (1, 64, 96, 3)

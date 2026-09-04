@@ -15,10 +15,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # Pinned. The rule set is also pinned in pyproject.toml, because ruff
-      # changes its default selection between releases.
-      - run: pip install "ruff==0.16.0"
+      # requirements-dev.txt pins ruff's version and pyproject.toml pins its
+      # rule set, because ruff changes its default selection between releases.
+      - run: pip install -r requirements-dev.txt
       - run: ruff check .
+
+  # The Python suite cannot open a browser, and every frontend bug this pack has
+  # shipped went out through a green Python suite. This drives the real,
+  # unmodified web/*.js against a fake LiteGraph node.
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: node --import ./tests/frontend/hooks.mjs --test "tests/frontend/*.test.mjs"
 
   test:
     runs-on: ubuntu-latest
@@ -40,8 +52,7 @@ jobs:
           python -m pip install --upgrade pip
           # ComfyUI supplies torch at runtime; the CPU wheel is enough to test with.
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -r requirements.txt
-          pip install pytest
+          pip install -r requirements-dev.txt
 
       - name: Test
         run: pytest -q

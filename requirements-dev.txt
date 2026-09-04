@@ -1,0 +1,12 @@
+# Development / test dependencies. ReLight itself declares no runtime
+# dependencies: numpy, Pillow, scipy and torch all ship with ComfyUI core
+# (see its own requirements.txt), at floors at or above anything this node
+# needs. Nothing here is installed by ComfyUI Manager or the Registry.
+numpy
+Pillow
+scipy
+pytest
+# Pinned to match .github/workflows/test.yml, and the rule set is pinned in
+# pyproject.toml: ruff changes its default selection between releases, so an
+# unpinned local ruff gives a false red/green against what CI runs.
+ruff==0.16.0

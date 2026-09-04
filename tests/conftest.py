@@ -52,6 +52,38 @@ def node():
     return _lock(_shallow_clone(ReLight))
 
 
+class _HiddenHolder:
+    """Stand-in for ``comfy_api``'s HiddenHolder.
+
+    The real one returns None for anything it was not given, which the node
+    relies on, so this does too.
+    """
+
+    def __init__(self, prompt=None, unique_id=None):
+        self.prompt = prompt
+        self.unique_id = unique_id
+
+    def __getattr__(self, name):
+        return None
+
+
+@pytest.fixture
+def node_with_prompt():
+    """A locked clone carrying hidden inputs, the way ComfyUI builds one.
+
+    ``PREPARE_CLASS_CLONE`` sets ``hidden`` on the clone *before* the class is
+    locked; a test cannot assign it afterwards, because the lock rejects every
+    class-attribute write (that is the whole point of the fixture above).
+    """
+
+    def _make(prompt=None, unique_id=None):
+        clone = _shallow_clone(ReLight)
+        clone.hidden = _HiddenHolder(prompt, unique_id)
+        return _lock(clone)
+
+    return _make
+
+
 @pytest.fixture
 def defaults():
     """Every widget input at its schema default, keyed by input id.

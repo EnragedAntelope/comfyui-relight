@@ -1,11 +1,14 @@
 [project]
 name = "ReLight"
-description = "Relight images without re-generating them: up to 3 positionable light sources, colored or corrective light, presets, rim lighting, and mask-aware 3D occlusion - fast, deterministic, no models to download."
-version = "3.1.2"
+description = "Relight images without re-generating them: up to 3 positionable light sources, colored light, color correction or both, presets, rim lighting, and mask-aware occlusion with a cast shadow - fast, deterministic, no models to download."
+version = "4.0.0"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
-# Floors mirror requirements.txt; keep the two in sync.
-dependencies = ["numpy>=1.19.0", "Pillow>=9.0.0", "scipy>=1.7.0"]
+# Deliberately empty. numpy, Pillow, scipy and torch are all supplied by
+# ComfyUI core's own requirements.txt at floors at or above anything this node
+# needs, so declaring them again only risks Manager/Registry resolving a
+# different version into a working install. Test-only deps: requirements-dev.txt.
+dependencies = []
 
 [project.urls]
 Repository = "https://github.com/EnragedAntelope/comfyui-relight"

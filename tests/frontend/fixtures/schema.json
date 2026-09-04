@@ -1,0 +1,226 @@
+{
+  "node_class": "ReLight",
+  "widgets": [
+    {
+      "name": "preset",
+      "default": "None",
+      "options": [
+        "None",
+        "Soft Window Light",
+        "Dramatic Side Light",
+        "Warm Sunset Glow",
+        "Cool Blue Moonlight",
+        "Studio Key Light",
+        "Rim Light (Behind)",
+        "Spotlight",
+        "Negative Light (Darken)"
+      ]
+    },
+    {
+      "name": "preserve_positioning",
+      "default": false
+    },
+    {
+      "name": "lighting_mode",
+      "default": "Color Correction",
+      "options": [
+        "Color Correction",
+        "Colored Light",
+        "Both"
+      ]
+    },
+    {
+      "name": "mask_shape",
+      "default": "Radial falloff",
+      "options": [
+        "Radial falloff",
+        "Directional gradient"
+      ]
+    },
+    {
+      "name": "subject_interaction",
+      "default": "None",
+      "options": [
+        "None",
+        "Light in front of subject",
+        "Light behind subject (rim)"
+      ]
+    },
+    {
+      "name": "remove_background",
+      "default": false
+    },
+    {
+      "name": "num_light_sources",
+      "default": 1
+    },
+    {
+      "name": "effect_strength",
+      "default": 1.0
+    },
+    {
+      "name": "mask_blur",
+      "default": 50.0
+    },
+    {
+      "name": "rim_amplification",
+      "default": 2.0
+    },
+    {
+      "name": "shadow_strength",
+      "default": 0.6
+    },
+    {
+      "name": "shadow_length",
+      "default": 0.35
+    },
+    {
+      "name": "debug_output_connected",
+      "default": false
+    },
+    {
+      "name": "light_position_x",
+      "default": 0.5
+    },
+    {
+      "name": "light_position_y",
+      "default": 0.5
+    },
+    {
+      "name": "inner_circle_radius",
+      "default": 0.4
+    },
+    {
+      "name": "outer_circle_radius",
+      "default": 0.7
+    },
+    {
+      "name": "light_color_r",
+      "default": 255
+    },
+    {
+      "name": "light_color_g",
+      "default": 255
+    },
+    {
+      "name": "light_color_b",
+      "default": 255
+    },
+    {
+      "name": "light_intensity",
+      "default": 1.0
+    },
+    {
+      "name": "inner_brightness",
+      "default": 10.0
+    },
+    {
+      "name": "inner_contrast",
+      "default": 5.0
+    },
+    {
+      "name": "inner_saturation",
+      "default": 5.0
+    },
+    {
+      "name": "inner_temperature",
+      "default": 0.0
+    },
+    {
+      "name": "inner_tint",
+      "default": 0.0
+    },
+    {
+      "name": "inner_gamma",
+      "default": 1.0
+    },
+    {
+      "name": "outer_brightness",
+      "default": -10.0
+    },
+    {
+      "name": "outer_contrast",
+      "default": 0.0
+    },
+    {
+      "name": "outer_saturation",
+      "default": -10.0
+    },
+    {
+      "name": "outer_temperature",
+      "default": 0.0
+    },
+    {
+      "name": "outer_tint",
+      "default": 0.0
+    },
+    {
+      "name": "outer_gamma",
+      "default": 0.91
+    },
+    {
+      "name": "light2_position_x",
+      "default": 0.8
+    },
+    {
+      "name": "light2_position_y",
+      "default": 0.2
+    },
+    {
+      "name": "light2_inner_radius",
+      "default": 0.3
+    },
+    {
+      "name": "light2_outer_radius",
+      "default": 0.6
+    },
+    {
+      "name": "light2_color_r",
+      "default": 180
+    },
+    {
+      "name": "light2_color_g",
+      "default": 180
+    },
+    {
+      "name": "light2_color_b",
+      "default": 255
+    },
+    {
+      "name": "light2_intensity",
+      "default": 0.7
+    },
+    {
+      "name": "light3_position_x",
+      "default": 0.3
+    },
+    {
+      "name": "light3_position_y",
+      "default": 0.8
+    },
+    {
+      "name": "light3_inner_radius",
+      "default": 0.25
+    },
+    {
+      "name": "light3_outer_radius",
+      "default": 0.5
+    },
+    {
+      "name": "light3_color_r",
+      "default": 255
+    },
+    {
+      "name": "light3_color_g",
+      "default": 150
+    },
+    {
+      "name": "light3_color_b",
+      "default": 120
+    },
+    {
+      "name": "light3_intensity",
+      "default": 0.5
+    }
+  ]
+}

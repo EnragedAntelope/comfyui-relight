@@ -184,7 +184,12 @@ class ReLight(io.ComfyNode):
         "Rim Light (Behind)": {
             "light_position_x": 0.5, "light_position_y": 0.1, "inner_circle_radius": 0.3, "outer_circle_radius": 0.6,
             "subject_interaction": SUBJECT_RIM, "lighting_mode": MODE_BOTH,
-            "light_color_r": 200, "light_color_g": 255, "light_color_b": 200, "light_intensity": 1.2,
+            # Neutral white. This shipped as (200, 255, 200) from v1.0, which put a
+            # +20/255 green cast on the rim and the background glow - invisible while
+            # the grading block was being discarded, obvious once inner_saturation
+            # landed. Intensity drops 1.2 -> 1.0 so removing the tint does not also
+            # make the preset brighter: mean lift stays within 2% of what shipped.
+            "light_color_r": 255, "light_color_g": 255, "light_color_b": 255, "light_intensity": 1.0,
             "inner_brightness": 0, "inner_contrast": 8, "inner_saturation": 12, "inner_temperature": 0, "inner_tint": 0, "inner_gamma": 1.0,
             "outer_brightness": 0, "outer_contrast": 0, "outer_saturation": 0, "outer_temperature": 0, "outer_tint": 0, "outer_gamma": 1.0,
             "mask_blur": 25, "effect_strength": 1.5, "rim_amplification": 2.5,

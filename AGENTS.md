@@ -60,7 +60,7 @@ pytest -q
 ruff check .
 
 # Frontend tests - drives the real web/*.js outside a browser (own CI job)
-node --import ./tests/frontend/hooks.mjs --test tests/frontend
+node --import ./tests/frontend/hooks.mjs --test "tests/frontend/*.test.mjs"
 
 # Regenerate the fixture the frontend tests build fake nodes from
 python scripts/dump_frontend_fixture.py

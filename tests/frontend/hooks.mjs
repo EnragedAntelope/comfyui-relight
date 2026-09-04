@@ -10,7 +10,13 @@
  * Matched by SUFFIX, not by exact path, so it keeps working for files at
  * different relative depths.
  *
- *   node --import ./tests/frontend/hooks.mjs --test tests/frontend
+ *   node --import ./tests/frontend/hooks.mjs --test "tests/frontend/*.test.mjs"
+ *
+ * A glob, not the directory. On Node 24 `--test tests/frontend` puts the
+ * directory itself through the ESM resolver, and the hook below hands it to
+ * `nextResolve`, which throws ERR_UNSUPPORTED_DIR_IMPORT and fails the whole
+ * run before a single test loads. Newer Node happens not to, so this passes
+ * locally and fails in CI. The glob resolves to files and works on both.
  */
 import module from "node:module";
 import { pathToFileURL } from "node:url";

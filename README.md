@@ -63,17 +63,14 @@ cd path/to/ComfyUI/custom_nodes
 # Clone this repository
 git clone https://github.com/EnragedAntelope/comfyui-relight
 
-# Install dependencies
-pip install -r comfyui-relight/requirements.txt
-
-# Restart ComfyUI
+# Restart ComfyUI - there is nothing else to install
 ```
 
 ### Requirements
 
 **ComfyUI 0.3.48 or newer.** ReLight is built on the ComfyUI v3 node schema (`comfy_api`), which first shipped in that release. On older builds the node will not load.
 
-ReLight needs `numpy`, `Pillow`, and `scipy` (installed automatically from `requirements.txt`; `torch` is provided by ComfyUI itself).
+ReLight declares no dependencies of its own. It needs `numpy`, `Pillow`, `scipy` and `torch` — all four ship with ComfyUI core, so a working ComfyUI already satisfies them.
 
 ReLight works best with high-quality foreground masks. We recommend installing:
 
@@ -284,8 +281,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 The node can be tested without a ComfyUI install — `tests/stubs` provides a stand-in for `comfy_api`:
 
 ```bash
-pip install -r requirements.txt
-pip install torch pytest ruff
+pip install -r requirements-dev.txt
 pytest -q
 ruff check .
 ```

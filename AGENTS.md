@@ -28,7 +28,7 @@ _Last verified: 2026-08-24_
 |------|---------|
 | `__init__.py` | ComfyUI custom-node entry point (registers the ReLight node) |
 | `relight.py` | The entire node: lighting engine, presets, UI widgets, image processing |
-| `requirements.txt` | numpy, Pillow, scipy |
+| `requirements-dev.txt` | test-only deps (numpy, Pillow, scipy, pytest, pinned ruff); the pack declares no runtime deps |
 | `tests/` | pytest suite (run in CI on Python 3.10-3.12) |
 | `example_workflows/` | Example ComfyUI workflows demonstrating the node |
 
@@ -41,10 +41,9 @@ _Last verified: 2026-08-24_
 # Manual install
 cd ComfyUI/custom_nodes
 git clone https://github.com/EnragedAntelope/comfyui-relight
-pip install -r comfyui-relight/requirements.txt
-# Restart ComfyUI
+# Restart ComfyUI - nothing to install
 
-# Dependencies: numpy, Pillow, scipy (torch provided by ComfyUI)
+# No runtime dependencies: numpy, Pillow, scipy and torch all come with ComfyUI core
 
 # Run tests (CI runs this on Python 3.10-3.12)
 pytest -q
@@ -60,7 +59,7 @@ ruff check .
 
 - Single-file node — `relight.py` is the entire feature. Keep it self-contained.
 - No models to download — pure image processing, deterministic output.
-- Dependencies are lightweight: numpy, Pillow, scipy. torch comes from ComfyUI itself.
+- **Declare no runtime dependencies.** numpy, Pillow, scipy and torch are all in ComfyUI core's own `requirements.txt` at floors at or above anything here, so `pyproject.toml` keeps `dependencies = []`. Test-only deps live in `requirements-dev.txt`, which both CI jobs install.
 - Works best with high-quality foreground masks (e.g. from ComfyUI Essentials).
 - The node uses the ComfyUI v3 schema (`comfy_api`, `v0_0_2` with a `latest` fallback).
 - Widget inputs are stored *positionally* in saved workflows. Appending is safe; inserting, removing or reordering silently corrupts every workflow in the wild. `test_saved_workflow_widget_order_is_stable` pins the order.

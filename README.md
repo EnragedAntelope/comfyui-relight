@@ -16,19 +16,20 @@ ReLight is a single, self-contained ComfyUI node that adds up to 3 positionable 
 ### Powerful Lighting Control
 
 - **Multiple Light Sources** - Place up to 3 independent light sources anywhere in your image
-- **Dynamic Lighting Modes**:
-  - 🎨 **Colored Lights** - Add RGB light with controllable intensity
-  - 🔄 **Color Correction** - Apply precise adjustments to brightness, contrast, saturation, temperature, tint and gamma
-- **Flexible Mask Shapes**:
-  - 🔵 **Circular Falloff** - Natural radial lighting with inner/outer radius control
-  - ↗️ **Gradient** - Directional lighting for effects like sunset rays or window light
+- **Three lighting modes** (`lighting_mode`):
+  - 🔄 **Color Correction** - Precise adjustments to brightness, contrast, saturation, temperature, tint and gamma
+  - 🎨 **Colored Light** - Additive RGB light with controllable intensity
+  - ✨ **Both** - The colour goes on first and the grade is applied to the result
+- **Flexible Mask Shapes** (`mask_shape`):
+  - 🔵 **Radial falloff** - Natural radial lighting with inner/outer radius control
+  - ↗️ **Directional gradient** - Light arriving from one side, for sunset rays or window light
 
 ### Advanced 3D Lighting Simulation
 
-- **Subject Interaction** (when used with mask input):
-  - 🔆 **Front Lighting** - Light illuminates the subject more strongly than background
-  - ✨ **Rim Lighting** - Creates dramatic edge highlighting with background glow
-  - 🌐 **Standard Lighting** - Traditional lighting without subject occlusion
+- **Subject Interaction** (`subject_interaction`, needs a mask):
+  - 🌐 **None** - Lights the whole frame evenly, no mask needed
+  - 🔆 **Light in front of subject** - The subject catches more light than the background
+  - ✨ **Light behind subject (rim)** - A rim highlight along the subject's edge, a background glow with real falloff, and a shadow the subject casts across the background (`shadow_strength`, `shadow_length`)
 
 ### Production-Ready Features
 
@@ -42,8 +43,9 @@ ReLight is a single, self-contained ComfyUI node that adds up to 3 positionable 
   - "Spotlight" - Focused dramatic lighting
   - "Negative Light (Darken)" - Creative darkening effects
 
-- **Visual Debugging** - See exactly where your lights are positioned and how they interact
-- **Fine-Tuning Controls** - Perfect your lighting with precision adjustments for blur, strength, and rim amplification
+- **Visual Debugging with nothing to switch on** - Connect the `debug_image` output to a preview and you get a view of where every light sits and which zones it covers. Disconnect it and the node stops drawing it. There is no toggle to remember
+- **A node that shows only what is live** - Lights 2 and 3 appear when you ask for them, colour controls appear in the modes that use them, and anything the selected preset has taken over is greyed out where you can still read its value
+- **Fine-Tuning Controls** - Precision adjustments for blur, strength, rim amplification and shadow
 
 ## 🔧 Installation
 
@@ -110,7 +112,7 @@ This example uses three colored lights to create a purposely over the top striki
 
 - **Main Settings**: 
   - 3 light sources
-  - "Behind Subject" light direction
+  - `subject_interaction`: "Light behind subject (rim)"
   - 2.0 effect strength
 
 - **Light 1 (Red)**: 
@@ -128,7 +130,7 @@ This example uses three colored lights to create a purposely over the top striki
   - RGB Color: (0, 0, 255)
   - Low intensity (0.2)
 
-This setup creates vibrant color separation while maintaining the "Behind Subject" mode to emphasize the edges of the figure with dramatic rim lighting.
+This setup creates vibrant color separation while the behind-subject mode emphasizes the edges of the figure with dramatic rim lighting.
 
 ### Other Lighting Ideas to Try
 
@@ -142,27 +144,28 @@ Create dramatic portrait lighting with a strong contrast between light and shado
 - Large outer radius (0.8)
 - High contrast (25)
 - Reduced saturation (-15)
-- "In Front of Subject" light direction
+- `subject_interaction`: "Light in front of subject"
 
 #### Sunset Silhouette
 ![Spidey outlined by the sun](https://github.com/user-attachments/assets/8ed5851a-3607-46c1-a1ba-eb3d297733d4)
 
 Create a beautiful sunset silhouette effect:
 - Light positioned low and centered (0.5, 0.9)
-- Warm colors (255, 180, 100) (enable "use colored lights")
-- "Behind Subject" light direction
+- Warm colors (255, 180, 100), `lighting_mode`: "Colored Light"
+- `subject_interaction`: "Light behind subject (rim)"
 - High rim amplification (3.0)
 - Moderate mask blur (60)
+- A long, soft shadow: `shadow_length` 0.6, `shadow_strength` 0.5
 
 #### Atmospheric Fog Light
 ![Creature with foggy lighting](https://github.com/user-attachments/assets/db0d51da-6e9f-4359-9af0-2213954e010e)
 
 Simulate light breaking through fog or mist:
 - Light positioned high (0.5, 0.1)
-- Cool blue-white color (200, 220, 255) (enable "use colored lights")
-- "In Front of Subject" light direction
+- Cool blue-white color (200, 220, 255), `lighting_mode`: "Colored Light"
+- `subject_interaction`: "Light in front of subject"
 - High mask blur (100)
-- Gradient mode enabled
+- `mask_shape`: "Directional gradient"
 - Medium intensity (1.5)
 
 #### Moonlight Through Window
@@ -170,8 +173,8 @@ Simulate light breaking through fog or mist:
 
 Simulate soft moonlight streaming through a window:
 - Light positioned at upper corner (0.8, 0.2)
-- Cool blue color (120, 150, 255) (enable "use colored lights")
-- Gradient mode enabled
+- Cool blue color (120, 150, 255), `lighting_mode`: "Both" so the colour and the grade both land
+- `mask_shape`: "Directional gradient"
 - Low brightness (-10)
 - High blue cast (Temperature -30)
 
@@ -179,14 +182,15 @@ Simulate soft moonlight streaming through a window:
 ## 💡 Pro Tips
 
 - **Layer Multiple Lights** - Use several ReLight nodes in sequence for complex lighting setups
-- **Debug View** - Enable `show_debug_info` to visualize light positions and better understand the effect
+- **Debug View** - Wire the `debug_image` output to a Preview Image node to see light positions and mask zones; unwire it when you are done
 - **Mask Quality Matters** - The better your foreground mask, the more realistic your lighting effects
 - **Combine with ControlNet** - Use ReLight results as input for ControlNet for guided image generation
 - **Perfect Rim Lighting** - For the best rim effects:
-  1. Position light behind subject
-  2. Use "Behind Subject" light direction
-  3. Increase rim_amplification for stronger edges
-  4. Keep mask_blur values low (20-40) for crisp edges
+  1. Position the light behind the subject
+  2. Set `subject_interaction` to "Light behind subject (rim)"
+  3. Increase `rim_amplification` for stronger edges
+  4. Keep `mask_blur` low (20-40) for crisp edges
+  5. Raise `shadow_length` to throw the subject's shadow further across the background, and `shadow_strength` to deepen it
 
 ## 📝 Parameter Guide
 
@@ -198,12 +202,15 @@ Simulate soft moonlight streaming through a window:
 | **mask** | Foreground mask (white=subject, black=background). Resized to the image automatically |
 | **preset** | Select from pre-configured lighting setups. Overrides the widgets it defines |
 | **num_light_sources** | How many lights to use (1-3). Lights 2 and 3 have their own position, radius and color, but in color-correction mode they reuse Light 1's correction settings |
-| **use_colored_lights** | Toggle between additive color and correction modes |
-| **light_direction** | How light interacts with subject ("No Occlusion", "In Front", "Behind"). This is the control to use; `apply_3d_lighting` is just a master off-switch |
+| **lighting_mode** | "Color Correction", "Colored Light", or "Both" (colour first, then grade the result) |
+| **mask_shape** | "Radial falloff" (a lamp) or "Directional gradient" (light from one side) |
+| **subject_interaction** | "None", "Light in front of subject", or "Light behind subject (rim)". The last two need a mask |
 | **remove_background** | Composite the lit result back over the untouched original using the mask, so only the subject is relit. Despite the name it removes nothing. Off by default |
 | **effect_strength** | Master intensity control for all lighting effects, gamma included. `0.0` leaves the image untouched. Scales a preset rather than being overridden by it. Does not scale `rim_amplification` or `mask_blur`, which have their own controls |
 | **mask_blur** | Controls softness of light edges and transitions |
-| **rim_amplification** | Specifically enhances rim light intensity |
+| **rim_amplification** | Strength of the rim highlight along the subject's edge (behind-subject mode only) |
+| **shadow_strength** | How dark the shadow the subject casts across the background is; `0.0` casts none (behind-subject mode only) |
+| **shadow_length** | How far that shadow reaches, as a fraction of the image's shorter side (behind-subject mode only) |
 
 ### A note on gamma
 
@@ -225,48 +232,63 @@ Simulate soft moonlight streaming through a window:
 |---------|----------|
 | No visible effect | Increase effect_strength or light_intensity |
 | Light too strong | Decrease effect_strength or specific intensity/brightness values |
-| Occlusion not working | Set light_direction to "Behind Subject" or "In Front of Subject" and connect a mask |
+| Occlusion not working | Set `subject_interaction` away from "None" and connect a mask |
 | Only the subject changes, background untouched | `remove_background` is on — turn it off to light the whole frame |
 | Editing a slider does nothing | A preset is active and overrides it. Set preset to "None" (`effect_strength` still works — it scales the preset) |
 | Preset ignores its own light position/radius | `preserve_positioning` is on — turn it off to let the preset place its light |
-| Black debug image | Check ComfyUI console for errors |
-| Node fails to load | Ensure scipy is installed and ComfyUI is 0.3.48 or newer |
+| Debug view is a bordered panel of text | Nothing is connected to `debug_image`. Wire it to a preview; it draws itself as soon as something consumes it |
+| Node fails to load | ComfyUI must be 0.3.48 or newer. ReLight installs nothing of its own; numpy, Pillow, scipy and torch all come with ComfyUI |
 | Poor mask quality | Use RemBG from ComfyUI Essentials for better masks |
-| Preset not working as expected | Try toggling use_colored_lights or apply_3d_lighting |
+| Preset not working as expected | Check `lighting_mode` — the preset sets it, and "Colored Light" ignores every `inner_*`/`outer_*` value |
 | Subject looks unlit / effect appears reversed | Your mask may be inverted — ReLight expects white=subject, black=background (invert it upstream with an InvertMask node) |
-| Debug image not showing correctly | Enable show_debug_info and check console logs |
+| Half the controls are missing | They are hidden because they do nothing in the current mode. Raise `num_light_sources`, or change `lighting_mode` / `subject_interaction`, and they come back |
+| A workflow saved before v4.0.0 looks wrong | Reload the page. The migration runs when the workflow loads and needs ReLight's frontend files, which arrive on a ComfyUI restart after updating |
 
 ## 📚 Detailed Parameters Reference
 
 ### Core Inputs
-- **image**: Input image to apply lighting effects
-- **mask** (optional): Foreground mask (White=Subject, Black=Background). Required for occlusion modes and background compositing
+- **image**: Input image to apply lighting effects. RGB or RGBA; an alpha channel passes through untouched
+- **mask** (optional): Foreground mask (white=subject, black=background). Needed for `subject_interaction` and for `remove_background`. Resized to the image automatically
 
-### Global Behavior
-- **preset**: Pre-configured starting points. Overrides the widgets it defines
-- **num_light_sources**: Use 1, 2, or 3 lights
-- **preserve_positioning**: Keep your own light positions and radii when a preset is selected, instead of letting the preset set them. Off by default so presets apply as designed
-- **show_debug_info**: Output visualization showing base masks and light positions (first image of the batch). While it is off, the `debug_image` output is a placeholder frame telling you to turn it on — that output is never a rendered view unless this is enabled
+### Preset
+- **preset**: Pre-configured starting points. A preset overrides the widgets it names, and those widgets are greyed out on the node so you can see what it set without being able to fight it
+- **preserve_positioning**: Keep your own light positions and radii when a preset is selected, instead of letting the preset set them. Off by default, so presets apply as designed. Turning it on hands the geometry widgets back
 
-### Lighting Mode & Occlusion
-- **use_colored_lights**: Use additive colored light instead of color correction. The two are exclusive: with this on, every `inner_*` / `outer_*` correction value is ignored and only the light's RGB and `light_intensity` apply. "Warm Sunset Glow", "Cool Blue Moonlight" and "Rim Light (Behind)" switch it on, so those presets deliver a colored glow rather than a color grade — turn it off to get their grading half instead
-- **use_gradient_mode**: Use directional gradient masks instead of radial
-- **apply_3d_lighting**: Master switch for occlusion. Leave it on and drive the behaviour with `light_direction`
-- **light_direction**: How light interacts with subject. "Behind"/"In Front" require a mask
-- **remove_background**: Composite the lit result back over the untouched original using the mask. Ignored for "Behind Subject" and "In Front of Subject", which already light foreground and background separately
+### Mode
+- **lighting_mode**:
+  - **Color Correction** — grades an inner zone with the `inner_*` values and the ring around it with the `outer_*` values. The light's RGB and intensity are unused
+  - **Colored Light** — adds coloured light on top of the image, using the light's RGB and `light_intensity`. The grading values are unused
+  - **Both** — the coloured light goes on first, then the grade is applied to the lit result. Identical to chaining two ReLight nodes with the same settings, one in each single mode
+- **mask_shape**: **Radial falloff** is a lamp — full strength inside `inner_circle_radius`, fading to nothing at `outer_circle_radius`. **Directional gradient** is light arriving from one side, for sunset rays and window light
 
-### Global Modifiers
-- **effect_strength**: Overall intensity multiplier for lighting, gamma included. `0.0` is a true no-op, with or without a preset. Presets set a baseline that this widget scales, so `1.0` gives the preset as designed. It does not scale `rim_amplification` or `mask_blur` — each has its own control
+### Subject interaction
+- **subject_interaction**:
+  - **None** — lights the whole frame evenly. No mask needed
+  - **Light in front of subject** — the subject catches more light than the background
+  - **Light behind subject (rim)** — three things at once: a rim highlight along the subject's edge, a background glow with radial falloff, and a shadow the subject casts across the background. Background light is masked off the subject *after* the blur, so it can never wash back over the silhouette
+- **remove_background**: Composite the lit result back over the untouched original using the mask, so only the subject is relit. Despite the name it removes nothing. Ignored by the two subject-aware modes, which already light foreground and background separately
+
+### Global modifiers
+- **num_light_sources**: 1, 2 or 3. Lights 2 and 3 have their own position, radius and colour, but in a grading mode they reuse Light 1's correction values
+- **effect_strength**: Overall intensity multiplier for lighting, gamma included. `0.0` is a true no-op, with or without a preset. A preset sets a baseline that this widget scales, so `1.0` gives the preset as designed. It does not scale `rim_amplification` or `mask_blur` — each has its own control
 - **mask_blur**: Blur radius for light mask edges
-- **rim_amplification**: Boost specifically for rim light component
+- **rim_amplification**: Strength of the rim highlight. Only used behind the subject
+- **shadow_strength**: How dark the cast shadow is, 0 to 1. `0.0` casts no shadow. Only used behind the subject
+- **shadow_length**: How far the cast shadow reaches, as a fraction of the image's shorter side. Only used behind the subject
 
-### Light Specific Settings (per light)
-- **Position**: light_position_x/_y coordinates
-- **Shape**: inner_circle_radius/outer_circle_radius
-- **Color** (when using colored lights): light_color_r/_g/_b, light_intensity — available for all three lights
-- **Corrections** (when using color correction): Brightness, Contrast, Saturation, Temperature, Tint, Gamma. These belong to Light 1; lights 2 and 3 reuse them at their own positions
+### Light-specific settings (per light)
+- **Position**: `light_position_x` / `_y`, normalized 0-1
+- **Shape**: `inner_circle_radius` (core) and `outer_circle_radius` (extent of the falloff)
+- **Colour** (Colored Light / Both): `light_color_r` / `_g` / `_b`, `light_intensity` — each of the three lights has its own
+- **Grading** (Color Correction / Both): brightness, contrast, saturation, temperature, tint and gamma, for the inner zone and the outer ring. These belong to Light 1; lights 2 and 3 reuse them at their own positions
 
-In color-correction mode with `light_direction` on "No Occlusion", the `inner_*` settings apply inside `inner_circle_radius` and the `outer_*` settings apply in the ring out to `outer_circle_radius`. Outside that ring the image is untouched. The two occlusion modes ("Behind Subject" and "In Front of Subject") build a single subject-aware light mask instead, and apply the `inner_*` settings through it — the `outer_*` settings are not used there.
+With `subject_interaction` on "None", the `inner_*` settings apply inside `inner_circle_radius` and the `outer_*` settings apply in the ring out to `outer_circle_radius`. Outside that ring the image is untouched. The two subject-aware modes build a single subject-aware light mask instead and apply the `inner_*` settings through it — the `outer_*` settings are not used there.
+
+### The debug view
+
+There is no toggle. Connect the third output, `debug_image`, to a Preview Image node and the node draws the visualization; disconnect it and the node stops. While nothing is connected, that output carries a bordered panel of text saying so, rather than a black frame that would look like a crash.
+
+The node carries one input you will not see: `debug_output_connected`, which ReLight's own frontend keeps in step with the wiring and hides from the node body. It exists because ComfyUI decides whether a node needs re-running from its *inputs*, so without it, connecting an *output* would replay the cached placeholder into your new preview. If you drive ReLight through the `/prompt` API rather than the UI, the node reads the submitted prompt instead and reaches the same answer.
 
 ## 📜 License
 
@@ -287,6 +309,23 @@ ruff check .
 ```
 
 ### 🔄 Updates
+
+- **v4.0.0** - A breaking release: four controls merged or renamed, three presets retuned, and "behind subject" finally occludes
+
+  **Old workflows still load correctly.** ReLight now ships frontend JavaScript that remaps a pre-v4 save's widget values by name when the workflow opens, so every value lands on the widget it belongs to. They are *not* guaranteed to render identically — see the drift note at the end.
+
+  - **Fixed: "Behind Subject" did not occlude anything.** Three separate causes, all of them now addressed. The silhouette was subtracted from the background light *before* the blur, so a 50px blur smeared background light straight back across the edge onto the subject's face; the two halves are now blurred separately and the silhouette re-applied afterwards, so background light can never land on the subject. The subject cast no shadow at all, so the near side of a head was lit exactly as brightly as the far side; it now casts one, traced back toward the light with the new `shadow_strength` and `shadow_length` controls. And the background "glow" was a hard-edged disc with no falloff; it now uses the same radial falloff as every other light
+  - **Fixed: colored light and color correction were mutually exclusive.** `use_colored_lights` became `lighting_mode`, with a third option, **Both**, that applies the coloured light and then grades the result. Three presets — "Warm Sunset Glow", "Cool Blue Moonlight" and "Rim Light (Behind)" — set a colour *and* a full grading block, so 12 values in each of them did nothing at all. They now run in **Both**, with their colour intensities pulled down to account for the grade no longer being discarded
+  - **Fixed: the debug view was invisible at real resolutions.** v3.1.2 replaced the black `debug_image` frame with a placeholder, then drew it at 13px on a full-resolution canvas — 1.7% of the height of a 768px render, which inside a preview thumbnail is a dark rectangle. Everything drawn on the debug view now scales with the frame, with a visible border, so it reads as a panel rather than a dead output. The same applies to the real debug view's legend, labels and light markers
+  - **The debug view has no toggle any more.** Connect `debug_image` to a preview and it draws; disconnect it and it stops. `show_debug_info` is gone
+  - **Fixed: "Fix node (recreate)" duplicated the node.** That menu entry comes from ComfyUI-Manager, whose implementation passes a string node id to `connect()` and throws part-way through, leaving both the original and its replacement on the canvas. ReLight now ships its own correct version and takes the broken entry out of its own nodes' menus (upstream: Comfy-Org/ComfyUI-Manager#3126)
+  - **The node now shows only the controls that are doing something.** Lights 2 and 3 appear when `num_light_sources` asks for them, colour controls appear in the modes that use them, grading controls in the modes that use *those*, and rim/shadow controls only when the light is behind the subject. Anything the selected preset has taken over is greyed out rather than hidden, so you can still read what it set. The node resizes to fit
+  - **Renamed and merged controls.** `use_colored_lights` → `lighting_mode`; `use_gradient_mode` → `mask_shape`; `apply_3d_lighting` + `light_direction` → `subject_interaction` (the master switch existed only to force "No Occlusion", so it collapsed into the choice it was gating); `show_debug_info` → removed. New: `shadow_strength`, `shadow_length`
+  - **Packaging: ReLight declares no dependencies.** `requirements.txt` is gone. numpy, Pillow, scipy and torch all ship with ComfyUI core at versions at or above anything this node needs, so declaring them again could only ever pull a different version into a working install. Manual installation is now a `git clone` and a restart
+
+  **Output drift, measured rather than claimed.** Sweeping all 8 presets across all 3 subject interactions and both single lighting modes — 54 combinations — 24 come back bit-identical to v3.1.2. Every changed combination is one of exactly two things: it uses the behind-subject path, or it uses one of the three retuned presets. Nothing else moved by a single bit. Peak difference is 247/255 on "Rim Light (Behind)", which is the intended effect of that preset finally rendering both of its halves and casting a shadow
+
+  **If you drive ReLight through the `/prompt` API** rather than the ComfyUI editor, note that the migration is a frontend feature: an API-format prompt that still names the old inputs will have them ignored and pick up the new defaults instead. Update those prompts to the new control names
 
 - **v3.1.2** - The debug output explains itself instead of going black
   - **Fixed: `debug_image` was a solid black frame whenever `show_debug_info` was off**, which is indistinguishable from a crashed node if you have that output wired to a preview. It now renders a legible placeholder naming the toggle that fills it. The same placeholder explains the other two empty cases: no light masks were generated, or the debug view failed to draw (with a console pointer)

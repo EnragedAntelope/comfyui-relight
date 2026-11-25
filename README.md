@@ -303,6 +303,10 @@ ruff check .
 
 ### 🔄 Updates
 
+- **v4.0.1** - A mask fix and a faster "in front of subject" light
+  - **Fixed: a channels-first mask came out blank.** A mask shaped `(batch, 1, height, width)`, as some segmentation nodes emit it, was read as channels-last, so its first pixel column became the whole mask and the subject vanished with no error. It is now recognised and used as-is
+  - **"Light in front of subject" no longer copies the batch to the CPU.** Its edge smoothing now runs in torch on the image's own device. Output differs from v4.0.0 by at most 0.014/255; every other mode is unchanged
+
 - **v4.0.0** - A breaking release: four controls merged or renamed, three presets retuned, and "behind subject" finally occludes
 
   **Old workflows still load correctly.** ReLight now ships frontend JavaScript that remaps a pre-v4 save's widget values by name when the workflow opens, so every value lands on the widget it belongs to. They are *not* guaranteed to render identically — see the drift note at the end.

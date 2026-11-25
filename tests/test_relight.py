@@ -350,6 +350,13 @@ def test_four_dimensional_mask_is_normalised_on_output(run, image):
     assert out_mask.shape == (1, 64, 96)
 
 
+def test_channels_first_mask_keeps_its_subject(run, image):
+    mask = torch.zeros(1, 1, 64, 96)
+    mask[..., 20:40, 30:60] = 1.0
+    out_mask = run(image, mask=mask)[1]
+    assert torch.equal(out_mask, mask.squeeze(1))
+
+
 def test_mask_output_is_black_when_no_mask_connected(run, image):
     out_mask = run(image)[1]
     assert out_mask.shape == (1, 64, 96)

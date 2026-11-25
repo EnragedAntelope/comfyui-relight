@@ -924,7 +924,11 @@ class ReLight(io.ComfyNode):
         fg_mask = input_mask.to(device=device, dtype=torch.float32)
 
         if fg_mask.dim() == 4:
-            if fg_mask.shape[3] == 1:
+            if fg_mask.shape[1] == 1 and fg_mask.shape[3] not in (1, 3, 4):
+                # Channels-first (B, 1, H, W), as torch/segmentation nodes emit.
+                # Read as channels-last, its first column became the whole mask.
+                fg_mask = fg_mask.squeeze(1)
+            elif fg_mask.shape[3] == 1:
                 fg_mask = fg_mask.squeeze(-1)
             elif fg_mask.shape[3] == 4:
                 fg_mask = fg_mask[..., 3]
@@ -1127,17 +1131,14 @@ class ReLight(io.ComfyNode):
 
             elif occlusion_active and subject_interaction == cls.SUBJECT_FRONT:
                 logger.debug("  Processing as Front Subject Light...")
-                light_mask_np = outer_mask_base.cpu().numpy()
-                fg_mask_np = fg_mask.cpu().numpy()
-
                 enhance_subject_factor = 1.3
                 reduce_background_factor = 0.8
-                occlusion_factor_mask_np = fg_mask_np * enhance_subject_factor + (1.0 - fg_mask_np) * reduce_background_factor
-                occlusion_factor_mask_np = ndimage.gaussian_filter(occlusion_factor_mask_np, sigma=(0, 2, 2))
-
-                combined_mask_unblurred = torch.from_numpy(
-                    np.clip(light_mask_np[None, ...] * occlusion_factor_mask_np, 0, 1).astype(np.float32)
-                ).to(device)
+                occlusion_factor = fg_mask * enhance_subject_factor + (1.0 - fg_mask) * reduce_background_factor
+                # Sigma-2 smoothing (blur_amount = 5 * sigma), on the image's own
+                # device. The blur clamps at 1.0, which cannot change the product:
+                # the light mask is a 0/1 disc and the product is clamped anyway.
+                occlusion_factor = cls.apply_mask_blur(occlusion_factor, 10.0)
+                combined_mask_unblurred = torch.clamp(outer_mask_base * occlusion_factor, 0, 1)
                 final_light_mask = cls.apply_mask_blur(combined_mask_unblurred, mask_blur)
                 colored_light_mask = correction_mask = final_light_mask
                 logger.debug(f"  Final Front Subject Mask: Max={torch.max(final_light_mask):.3f}")

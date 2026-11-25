@@ -1,7 +1,7 @@
 [project]
 name = "ReLight"
 description = "Relight images without re-generating them: up to 3 positionable light sources, colored light, color correction or both, presets, rim lighting, and mask-aware occlusion with a cast shadow - fast, deterministic, no models to download."
-version = "4.0.0"
+version = "4.0.1"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
 # Deliberately empty. numpy, Pillow, scipy and torch are all supplied by
